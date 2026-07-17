@@ -15,9 +15,8 @@ Windows 系统托盘音频输出设备快速切换工具。
 
 ## 使用
 
-1. 从 [Releases](https://github.com/brandonmp/audio-switcher/releases) 下载最新 `audio-switcher-vX.Y.Z-win64.zip`
-2. 解压到任意目录
-3. 运行 `audio-switcher.exe`（无需管理员权限）
+1. 从 [Releases](https://github.com/Wildfire2282/audio-switcher/releases) 下载最新的 `audio-switcher.exe`
+2. 双击运行（无需管理员权限）
 
 托盘图标出现后，右键打开菜单即可选择默认音频设备。
 
