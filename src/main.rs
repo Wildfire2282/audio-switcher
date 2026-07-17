@@ -3,22 +3,66 @@
 #![windows_subsystem = "windows"]
 
 use audio_switcher::{audio, startup, theme, tray};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use tao::event::{Event, StartCause};
+use tao::event_loop::EventLoopProxy;
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tray_icon::menu::MenuEvent;
+use tray_icon::TrayIconEvent;
 use windows::core::w;
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, MSLLHOOKSTRUCT, WH_MOUSE_LL,
+    WM_MOUSEWHEEL,
+};
 
 /// One variant of every event we forward into tao.
-///
-/// Only menu events are needed: the tray icon handles right-click menu
-/// popup itself, and left-click does nothing (disabled in `build_tray`).
 #[derive(Debug)]
 enum UserEvent {
     Menu(MenuEvent),
+    TrayIcon(TrayIconEvent),
+    Wheel(i16),
+}
+
+static WHEEL_PROXY: OnceLock<EventLoopProxy<UserEvent>> = OnceLock::new();
+static HOOK_HANDLE: OnceLock<isize> = OnceLock::new();
+static HOVERING: AtomicBool = AtomicBool::new(false);
+const WHEEL_DELTA: i16 = 120;
+
+/// Low-level mouse hook. When the wheel turns while the cursor is over our
+/// tray icon, forward the wheel delta into the tao event loop.
+unsafe extern "system" fn mouse_hook_proc(
+    code: i32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    if code >= 0 && wparam.0 as u32 == WM_MOUSEWHEEL && HOVERING.load(Ordering::Relaxed) {
+        let info = &*(lparam.0 as *const MSLLHOOKSTRUCT);
+        let delta = ((info.mouseData >> 16) & 0xffff) as u16 as i16;
+        if delta != 0 {
+            if let Some(proxy) = WHEEL_PROXY.get() {
+                let _ = proxy.send_event(UserEvent::Wheel(delta));
+            }
+        }
+    }
+    // First argument is ignored on modern Windows but must be provided.
+    CallNextHookEx(None, code, wparam, lparam)
+}
+
+/// Install the low-level mouse hook and stash a proxy for forwarding wheel
+/// events into the event loop.
+fn install_wheel_hook(proxy: EventLoopProxy<UserEvent>) {
+    let _ = WHEEL_PROXY.set(proxy);
+    unsafe {
+        let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0);
+        if let Ok(h) = hook {
+            let _ = HOOK_HANDLE.set(h.0 as isize);
+        }
+    }
 }
 
 fn main() {
@@ -48,12 +92,17 @@ fn main() {
 
     let event_loop = EventLoopBuilder::with_user_event().build();
 
-    // Only the menu event handler is needed. Left-click is intentionally
-    // a no-op (`build_tray` sets `with_menu_on_left_click(false)`).
     let menu_proxy = event_loop.create_proxy();
+    let tray_proxy = event_loop.create_proxy();
+    let wheel_proxy = event_loop.create_proxy();
+
     MenuEvent::set_event_handler(Some(move |e| {
         let _ = menu_proxy.send_event(UserEvent::Menu(e));
     }));
+    TrayIconEvent::set_event_handler(Some(move |e| {
+        let _ = tray_proxy.send_event(UserEvent::TrayIcon(e));
+    }));
+    install_wheel_hook(wheel_proxy);
 
     let menu = tray::build_menu();
     let icon = tray::make_icon(initial_theme);
@@ -96,7 +145,31 @@ fn main() {
                     }
                 }
             }
+            Event::UserEvent(UserEvent::TrayIcon(icon_evt)) => match icon_evt {
+                TrayIconEvent::Enter { .. } => {
+                    HOVERING.store(true, Ordering::Relaxed);
+                }
+                TrayIconEvent::Leave { .. } => {
+                    HOVERING.store(false, Ordering::Relaxed);
+                }
+                _ => {}
+            },
+            Event::UserEvent(UserEvent::Wheel(delta)) => {
+                let notches = (delta as i32) / (WHEEL_DELTA as i32);
+                if notches != 0 {
+                    let _ = audio::adjust_volume(notches);
+                    // Feedback: update tooltip with current volume
+                    if let Some(scalar) = audio::get_volume() {
+                        let pct = (scalar * 100.0).round() as u32;
+                        let tip = format!("音频输出设备切换 - 音量: {}%", pct);
+                        let _ = tray.set_tooltip(Some(tip.as_str()));
+                    }
+                }
+            }
             Event::LoopDestroyed => unsafe {
+                if let Some(&handle) = HOOK_HANDLE.get() {
+                    let _ = UnhookWindowsHookEx(HHOOK(handle as *mut _));
+                }
                 CoUninitialize();
             },
             _ => {}

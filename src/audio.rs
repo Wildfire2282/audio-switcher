@@ -7,17 +7,16 @@
 //! COM class) to actually switch the default for all three `ERole`s.
 
 use com_policy_config::{IPolicyConfig, PolicyConfigClient};
+use widestring::U16CStr;
 use windows::core::Result;
 use windows::core::PCWSTR;
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
+use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Win32::Media::Audio::{
     eCommunications, eConsole, eMultimedia, eRender, IMMDeviceEnumerator, MMDeviceEnumerator,
     DEVICE_STATE_ACTIVE,
 };
-use windows::Win32::System::Com::{
-    CoCreateInstance, CLSCTX_ALL, STGM_READ,
-};
-use widestring::U16CStr;
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL, STGM_READ};
 
 /// One render endpoint.
 #[derive(Debug, Clone)]
@@ -29,12 +28,11 @@ pub struct AudioDevice {
 /// Enumerate active render (output) endpoints. Returns an empty `Vec` on any
 /// failure so the menu can still render (with a "no devices" placeholder).
 pub fn enumerate_render_endpoints() -> Vec<AudioDevice> {
-    let enumerator: IMMDeviceEnumerator = match unsafe {
-        CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
-    } {
-        Ok(e) => e,
-        Err(_) => return Vec::new(),
-    };
+    let enumerator: IMMDeviceEnumerator =
+        match unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) } {
+            Ok(e) => e,
+            Err(_) => return Vec::new(),
+        };
 
     let collection = match unsafe { enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE) } {
         Ok(c) => c,
@@ -74,8 +72,7 @@ pub fn enumerate_render_endpoints() -> Vec<AudioDevice> {
             Ok(p) => p,
             Err(_) => continue,
         };
-        let id = unsafe { U16CStr::from_ptr_str(id_pwstr.0) }
-            .to_string_lossy();
+        let id = unsafe { U16CStr::from_ptr_str(id_pwstr.0) }.to_string_lossy();
 
         out.push(AudioDevice { id, name });
     }
@@ -110,8 +107,7 @@ pub fn set_default(device_id: &str) -> Result<()> {
     // Look up the matching device. The COM string returned by GetId is
     // owned by the IMMDevice, so we must perform the COM call while the
     // device is still alive (i.e. inside the loop iteration).
-    let policy: IPolicyConfig =
-        unsafe { CoCreateInstance(&PolicyConfigClient, None, CLSCTX_ALL) }?;
+    let policy: IPolicyConfig = unsafe { CoCreateInstance(&PolicyConfigClient, None, CLSCTX_ALL) }?;
 
     let mut found = false;
     for i in 0..count {
@@ -140,4 +136,37 @@ pub fn set_default(device_id: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Adjust the master volume of the current default render endpoint.
+///
+/// `notches` is the signed wheel notch count (positive = up = louder). Each
+/// notch changes scalar volume by 1% (`STEP = 0.01`), clamped to [0.0, 1.0].
+/// COM failures are silently returned for the caller to discard.
+pub fn adjust_volume(notches: i32) -> Result<()> {
+    let enumerator: IMMDeviceEnumerator =
+        unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }?;
+
+    let device = unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }?;
+
+    let vol: IAudioEndpointVolume =
+        unsafe { device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None) }?;
+
+    let current = unsafe { vol.GetMasterVolumeLevelScalar() }?;
+
+    let step = 0.01f32;
+    let new = (current + notches as f32 * step).clamp(0.0, 1.0);
+
+    unsafe { vol.SetMasterVolumeLevelScalar(new, std::ptr::null()) }
+}
+
+/// Read the current master volume scalar of the default render endpoint.
+/// Returns `None` on any COM failure.
+pub fn get_volume() -> Option<f32> {
+    let enumerator: IMMDeviceEnumerator =
+        unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }.ok()?;
+    let device = unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }.ok()?;
+    let vol: IAudioEndpointVolume =
+        unsafe { device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None) }.ok()?;
+    unsafe { vol.GetMasterVolumeLevelScalar() }.ok()
 }
