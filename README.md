@@ -13,12 +13,6 @@ Windows 系统托盘音频输出设备快速切换工具。
 - **单实例** — 通过全局 Mutex 确保只有一个实例运行
 - **轻量** — Release 构建约 500KB，无运行时依赖
 
-## 截图
-
-| 浅色主题 | 深色主题 |
-|---|---|
-| ![浅色图标](assets/icon_light.png) | ![深色图标](assets/icon_dark.png) |
-
 ## 使用
 
 1. 从 [Releases](https://github.com/brandonmp/audio-switcher/releases) 下载最新 `audio-switcher-vX.Y.Z-win64.zip`
