@@ -180,5 +180,5 @@ fn main() {
 /// Build a fresh menu, treating any unexpected panic as "no refresh" so a
 /// transient COM hiccup never tears down the tray.
 fn safe_rebuild() -> Option<tray_icon::menu::Menu> {
-    std::panic::catch_unwind(|| tray::build_menu()).ok()
+    std::panic::catch_unwind(tray::build_menu).ok()
 }
