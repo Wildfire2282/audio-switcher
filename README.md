@@ -6,15 +6,13 @@ Windows 系统托盘音频输出设备快速切换工具。
 
 右键点击托盘图标，在菜单中直接切换默认播放设备，无需进入系统声音设置。
 
-## 功能
-
 - **设备切换** — 枚举所有活动的音频渲染（输出）端点，点击即设为默认
 - **三角色统一切换** — 同时设置 console / multimedia / communications 三个 ERole
+- **滚轮调音** — 鼠标悬停托盘图标，滚动滚轮即可调节音量，tooltip 实时显示百分比
 - **开机自启** — 菜单中一键启用/禁用 Windows 自动启动
 - **主题适配** — 自动检测系统主题（浅色/深色），使用对应配色的托盘图标
 - **单实例** — 通过全局 Mutex 确保只有一个实例运行
 - **轻量** — Release 构建约 500KB，无运行时依赖
-
 ## 使用
 
 1. 从 [Releases](https://github.com/Wildfire2282/audio-switcher/releases) 下载最新的 `audio-switcher.exe`
@@ -71,8 +69,11 @@ src/
 
 通过 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 注册表键实现，仅影响当前用户。
 
-## 调试工具
+### 滚轮调音
 
+使用 `WH_MOUSE_LL` 低层鼠标钩子截获全局滚轮事件，配合 `TrayIconEvent::Enter/Leave` 跟踪光标悬停状态。仅在悬停于托盘图标上时调节音量，通过 `IAudioEndpointVolume` COM 接口以 1% 步进调整，并更新 tooltip 显示实时音量百分比。
+
+## 调试工具
 ```shell
 # 音频模块冒烟测试（会临时切换默认设备并恢复）
 cargo run --release --bin smoke_audio
