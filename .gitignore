@@ -1,0 +1,22 @@
+# Rust build outputs
+/target
+/build
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Environment / personal
+.env
+*.env.local
+
+# Logs
+*.log
