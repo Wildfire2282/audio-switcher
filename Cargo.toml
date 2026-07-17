@@ -2,6 +2,7 @@
 name = "audio-switcher"
 version = "0.2.1"
 edition = "2021"
+repository = "https://github.com/Wildfire2282/audio-switcher"
 
 [dependencies]
 tao = "0.30"
@@ -23,6 +24,7 @@ windows = { version = "0.61", features = [
 ] }
 widestring = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
+open = "5"
 
 [profile.release]
 lto = true

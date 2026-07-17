@@ -12,6 +12,7 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 const DEV_PREFIX: &str = "dev:";
 const ID_REFRESH: &str = "refresh";
 const ID_EXIT: &str = "exit";
+const ID_ABOUT: &str = "about";
 const ID_AUTOSTART: &str = "autostart";
 
 /// Build the right-click menu for the tray.
@@ -52,12 +53,17 @@ pub fn build_menu() -> Menu {
         .text("刷新设备列表")
         .enabled(true)
         .build();
+    let about = MenuItemBuilder::new()
+        .id(MenuId::new(ID_ABOUT))
+        .text("关于")
+        .enabled(true)
+        .build();
     let exit = MenuItemBuilder::new()
         .id(MenuId::new(ID_EXIT))
         .text("退出")
         .enabled(true)
         .build();
-    let _ = menu.append_items(&[&sep, &autostart, &refresh, &exit]);
+    let _ = menu.append_items(&[&sep, &autostart, &refresh, &about, &exit]);
 
     menu
 }
@@ -115,6 +121,7 @@ pub enum MenuAction<'a> {
     Switch(&'a str),
     Refresh,
     ToggleAutostart,
+    About,
     Exit,
 }
 
@@ -123,6 +130,8 @@ pub fn classify_menu_id(id: &str) -> MenuAction<'_> {
         MenuAction::Switch(dev)
     } else if id == ID_REFRESH {
         MenuAction::Refresh
+    } else if id == ID_ABOUT {
+        MenuAction::About
     } else if id == ID_AUTOSTART {
         MenuAction::ToggleAutostart
     } else {
@@ -175,6 +184,7 @@ mod tests {
             MenuAction::Switch("abc")
         ));
         assert!(matches!(classify_menu_id(ID_REFRESH), MenuAction::Refresh));
+        assert!(matches!(classify_menu_id(ID_ABOUT), MenuAction::About));
         assert!(matches!(classify_menu_id(ID_EXIT), MenuAction::Exit));
         assert!(matches!(
             classify_menu_id(ID_AUTOSTART),

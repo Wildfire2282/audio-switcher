@@ -140,6 +140,10 @@ fn main() {
                             tray.set_menu(Some(Box::new(m)));
                         }
                     }
+                    tray::MenuAction::About => {
+                        let url = env!("CARGO_PKG_REPOSITORY");
+                        let _ = open::that(url);
+                    }
                     tray::MenuAction::Exit => {
                         *control_flow = ControlFlow::Exit;
                     }
