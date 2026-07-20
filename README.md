@@ -1,103 +1,112 @@
 # Audio Switcher
 
-Windows 系统托盘音频输出设备快速切换工具。
+Quick audio output device switcher for the Windows system tray.
 
-右键点击托盘图标，在菜单中直接切换默认播放设备，无需进入系统声音设置。
+Right-click the tray icon to switch the default playback device directly — no need to open Sound settings.
 
-- **设备切换** — 枚举所有活动的音频渲染（输出）端点，点击即设为默认
-- **三角色统一切换** — 同时设置 console / multimedia / communications 三个 ERole
-- **滚轮调音** — 鼠标悬停托盘图标，滚动滚轮即可调节音量，tooltip 实时显示百分比
-- **开机自启** — 菜单中一键启用/禁用 Windows 自动启动
-- **关于** — 菜单中点击"关于"直接跳转到 GitHub 仓库
-- **主题适配** — 自动检测系统主题（浅色/深色），使用对应配色的托盘图标
-- **单实例** — 通过全局 Mutex 确保只有一个实例运行
-- **AOT 单文件** — 发布为单个原生可执行文件，无需额外运行时
+- **Device switching** — enumerates all active render endpoints, one click sets default
+- **Three-role switch** — sets console / multimedia / communications ERoles simultaneously
+- **Wheel volume** — scroll over the tray icon to adjust volume, instant tooltip shows device name + percentage
+- **Auto-start** — toggle Windows startup from the menu
+- **About** — menu link to the GitHub repo
+- **Theme-aware** — auto-detects system theme (light/dark), picks matching tray icon
+- **Single instance** — global mutex ensures only one instance runs
+- **AOT single-file** — published as a single native executable, no runtime required
 
-## 技术栈
+## Tech stack
 
 - C# 13 / .NET 10
-- 原生 Win32 P/Invoke（CsWin32 源生成器）
-- Core Audio API（`MMDeviceEnumerator`、`IPolicyConfig`、`IAudioEndpointVolume`）
-- 原生托盘图标与上下文菜单（`Shell_NotifyIcon` / `TrackPopupMenu`）
-- AOT + 单文件发布
+- Native Win32 P/Invoke (CsWin32 source generator)
+- Core Audio API (`MMDeviceEnumerator`, `IPolicyConfig`, `IAudioEndpointVolume`)
+- Native tray icon & context menu (`Shell_NotifyIcon` / `TrackPopupMenu`)
+- AOT + single-file publish
 
-> 注：Windows Forms 与 .NET 10 AOT 剪裁不兼容，因此 UI 层使用原生 Win32 实现。
+> Note: Windows Forms is incompatible with .NET 10 AOT trimming, so the UI layer uses raw Win32.
 
-## 使用
+## Usage
 
-1. 从 [Releases](https://github.com/Wildfire2282/audio-switcher/releases) 下载最新的 `audio-switcher.exe`
-2. 双击运行（无需管理员权限）
+1. Download the latest `audio-switcher.exe` from [Releases](https://github.com/Wildfire2282/audio-switcher/releases)
+2. Double-click to run (no admin required)
 
-托盘图标出现后，右键打开菜单即可选择默认音频设备。
+Right-click the tray icon to pick a default audio device.
 
-## 构建
+## Build
 
 ```shell
 dotnet build
 ```
 
-## AOT 单文件发布
+## AOT single-file publish
 
 ```shell
 dotnet publish -c Release -r win-x64 --self-contained true
 ```
 
-编译产物在 `bin/Release/net10.0-windows/win-x64/publish/audio-switcher.exe`。
+Output: `bin/Release/net10.0-windows/win-x64/publish/audio-switcher.exe` (~2.7 MB).
 
-### 前提
+### Prerequisites
 
 - .NET 10 SDK
-- Windows 10/11（x64）
+- Windows 10/11 (x64)
 
-## 项目结构
+## Project structure
 
 ```
 src/
-├── Program.cs              # 入口：COM 初始化、单例守卫、消息循环
-├── TrayApp.cs              # 原生托盘图标、上下文菜单、滚轮钩子
-├── AudioManager.cs         # 音频设备枚举 + 默认设备切换
-├── TrayMenuBuilder.cs      # 菜单项构建
-├── ThemeDetector.cs        # Windows 主题检测（注册表）
-├── StartupManager.cs       # 开机自启管理（Run 注册表键）
+├── Program.cs              # Entry: COM init, single-instance guard, message loop
+├── TrayApp.cs              # Native tray icon, context menu, wheel hook
+├── AudioManager.cs         # Device enumeration + default switching
+├── TrayMenuBuilder.cs      # Context menu item builder
+├── ThemeDetector.cs        # Windows theme detection (registry)
+├── StartupManager.cs       # Auto-start manager (Run registry key)
 └── Interop/
-    ├── ComInterfaces.cs    # Core Audio COM 接口声明
-    └── Win32Defs.cs        # Win32 常量、结构、HRESULT 辅助
+    ├── ComInterfaces.cs    # Core Audio COM interfaces (GeneratedComInterface)
+    ├── Win32Defs.cs        # Win32 enums, structs, HRESULT helpers
+    └── NativeMethods.cs    # AOT-safe CoCreateInstance + DPI awareness
 tests/
 └── Smoke/
-    └── Program.cs          # 音频模块端到端冒烟测试
+    └── Program.cs          # End-to-end audio smoke test
 ```
 
-## 内部实现
+## Internals
 
-### 音频切换
+### Audio switching
 
-使用 `MMDeviceEnumerator` 枚举活动渲染端点，通过 `IPolicyConfig`（`PolicyConfigClient` COM 类）设置默认设备。核心实现参考了 [`com-policy-config`](https://github.com/sidit77/com-policy-config)。
+Uses `MMDeviceEnumerator` to enumerate active render endpoints, switches the default via `IPolicyConfig` (`PolicyConfigClient` COM class). Based on [`com-policy-config`](https://github.com/sidit77/com-policy-config).
 
-切换会同时覆盖三个 ERole：
+Switching covers all three ERoles:
 
-- `eConsole` — 控制台
-- `eMultimedia` — 多媒体
-- `eCommunications` — 通信
+- `eConsole` — console
+- `eMultimedia` — multimedia
+- `eCommunications` — communications
 
-### 托盘图标
+### Tray icon
 
-两张 PNG（浅色/深色）作为嵌入资源打包进二进制，启动时根据注册表 `AppsUseLightTheme` 值选择对应图标。
+Two PNGs (light/dark) are embedded as resources. The matching icon is selected at startup based on the registry value `AppsUseLightTheme`.
 
-### 自启
+### Auto-start
 
-通过 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 注册表键实现，仅影响当前用户。
+Managed via `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, per-user only.
 
-### 滚轮调音
+### Wheel volume
 
-使用 `WH_MOUSE_LL` 低层鼠标钩子截获全局滚轮事件，配合 `WM_MOUSEMOVE` 跟踪光标悬停状态。仅在悬停于托盘图标上时调节音量，通过 `IAudioEndpointVolume` COM 接口以 1% 步进调整，并更新 tooltip 显示实时音量百分比。
+A `WH_MOUSE_LL` low-level mouse hook captures global scroll events. Hover detection uses `Shell_NotifyIconGetRect` to check whether the cursor is inside the tray icon's bounding rectangle at the time of the event — no timers, no lag. Volume is adjusted in 1% steps via `IAudioEndpointVolume`, with an instant tooltip showing device name + percentage.
 
-## 调试工具
+### DPI awareness
+
+`SetProcessDpiAwarenessContext` with `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2` is called at startup, so the native context menu renders at native resolution on high-DPI (4K) displays.
+
+### AOT COM interop
+
+All Core Audio COM interfaces use `[GeneratedComInterface]` (source-generated COM) instead of `[ComImport]` (runtime-based, fails under AOT). RCW creation goes through `StrategyBasedComWrappers`, and all string/boolean marshalling is done manually via `IntPtr` to avoid AOT-unsupported `MarshalAs` attributes.
+
+## Debug tools
 
 ```shell
-# 音频模块冒烟测试（会临时切换默认设备并恢复）
+# Audio smoke test (temporarily switches default device and restores)
 dotnet run --project tests/Smoke/Smoke.csproj -c Release
 ```
 
-## 许可
+## License
 
 MIT
