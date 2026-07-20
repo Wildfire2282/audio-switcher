@@ -136,7 +136,7 @@ internal sealed class TrayApp : IDisposable
             uCallbackMessage = TrayMessageId,
             hIcon = _icon,
         };
-        CopyToTip(ref data, "音频输出设备切换");
+        CopyToTip(ref data, Locale.T("音频输出设备切换", "Audio device switcher"));
 
         if (!PInvoke.Shell_NotifyIcon(NOTIFY_ICON_MESSAGE.NIM_ADD, in data))
             Marshal.ThrowExceptionForHR(Marshal.GetHRForLastWin32Error());
@@ -210,7 +210,7 @@ internal sealed class TrayApp : IDisposable
 
     private static string BuildVolumeTooltip(int pct)
     {
-        var name = "音频输出";
+        var name = Locale.T("音频输出", "Audio output");
         var defaultId = AudioManager.GetCurrentDefaultId();
         if (defaultId != null)
         {

@@ -23,7 +23,7 @@ internal static class TrayMenuBuilder
 
         if (devices.Count == 0)
         {
-            items.Add(new TrayMenuItem("(无可用音频设备)", -1, Enabled: false));
+            items.Add(new TrayMenuItem(Locale.T("(无可用音频设备)", "(No audio devices available)"), -1, Enabled: false));
         }
         else
         {
@@ -36,10 +36,10 @@ internal static class TrayMenuBuilder
         }
 
         items.Add(new TrayMenuItem(string.Empty, -1, Separator: true));
-        items.Add(new TrayMenuItem("开机自动启动", (int)TrayMenuCommand.ToggleAutostart, Checked: autostart));
-        items.Add(new TrayMenuItem("刷新设备列表", (int)TrayMenuCommand.Refresh));
-        items.Add(new TrayMenuItem("关于", (int)TrayMenuCommand.About));
-        items.Add(new TrayMenuItem("退出", (int)TrayMenuCommand.Exit));
+        items.Add(new TrayMenuItem(Locale.T("开机自动启动", "Start with Windows"), (int)TrayMenuCommand.ToggleAutostart, Checked: autostart));
+        items.Add(new TrayMenuItem(Locale.T("刷新设备列表", "Refresh device list"), (int)TrayMenuCommand.Refresh));
+        items.Add(new TrayMenuItem(Locale.T("关于", "About"), (int)TrayMenuCommand.About));
+        items.Add(new TrayMenuItem(Locale.T("退出", "Exit"), (int)TrayMenuCommand.Exit));
 
         return items;
     }
