@@ -20,3 +20,10 @@ $RECYCLE.BIN/
 
 # Logs
 *.log
+
+
+# .NET build outputs
+bin/
+obj/
+*.exe
+*.pdb
