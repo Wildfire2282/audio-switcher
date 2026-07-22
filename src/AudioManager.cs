@@ -4,7 +4,8 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 using AudioSwitcher.Interop;
 
-internal sealed record AudioDevice(string Id, string Name);
+ internal sealed record AudioDevice(string Id, string Name);
+internal sealed record AudioSessionInfo(uint ProcessId, string DisplayName);
 
 internal static class AudioManager
 {
@@ -75,10 +76,6 @@ internal static class AudioManager
 
     public static void SetDefault(string deviceId)
     {
-        var devices = EnumerateRenderEndpoints();
-        if (!devices.Any(d => d.Id == deviceId))
-            Marshal.ThrowExceptionForHR(HResult.ERROR_NOT_FOUND);
-
         var ptr = Marshal.StringToCoTaskMemUni(deviceId);
         try
         {
@@ -118,6 +115,173 @@ internal static class AudioManager
             return HResult.Succeeded(hr) ? level : null;
         }
         finally { Release(volume); }
+    }
+
+    // ── per-app audio session methods ──────────────────────────────
+
+    public static List<AudioSessionInfo> EnumerateSessions()
+    {
+        var sessions = new List<AudioSessionInfo>();
+        try
+        {
+            var enumerator = CreateEnumerator();
+            try
+            {
+                var hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eConsole, out var devPtr);
+                if (!HResult.Succeeded(hr)) return sessions;
+                var device = Cast<IMMDevice>(devPtr);
+
+                try
+                {
+                    var iid = typeof(IAudioSessionManager2).GUID;
+                    hr = device.Activate(ref iid, Clsctx.CLSCTX_ALL, IntPtr.Zero, out var mgrPtr);
+                    if (!HResult.Succeeded(hr)) return sessions;
+                    var mgr = Cast<IAudioSessionManager2>(mgrPtr);
+
+                    try
+                    {
+                        hr = mgr.GetSessionEnumerator(out var enumPtr);
+                        if (!HResult.Succeeded(hr)) return sessions;
+                        var sessionEnum = Cast<IAudioSessionEnumerator>(enumPtr);
+
+                        try
+                        {
+                            hr = sessionEnum.GetCount(out var count);
+                            if (!HResult.Succeeded(hr)) return sessions;
+
+                            for (int i = 0; i < count; i++)
+                            {
+                                hr = sessionEnum.GetSession(i, out var sessionPtr);
+                                if (!HResult.Succeeded(hr)) continue;
+
+                                try
+                                {
+                                    hr = Cast<IAudioSessionControl2>(sessionPtr).GetState(out var state);
+                                    if (!HResult.Succeeded(hr) || state != 0) continue;
+
+                                    hr = Cast<IAudioSessionControl2>(sessionPtr).GetProcessId(out var pid);
+                                    if (!HResult.Succeeded(hr)) continue;
+
+                                    hr = Cast<IAudioSessionControl2>(sessionPtr).GetDisplayName(out var namePtr);
+                                    string name = string.Empty;
+                                    if (HResult.Succeeded(hr) && namePtr != IntPtr.Zero)
+                                    {
+                                        try { name = Marshal.PtrToStringUni(namePtr) ?? string.Empty; }
+                                        finally { NativeMethods.CoTaskMemFree(namePtr); }
+                                    }
+
+                                    if (string.IsNullOrWhiteSpace(name))
+                                        name = GetProcessNameSafe(pid);
+
+                                    sessions.Add(new AudioSessionInfo(pid, name));
+                                }
+                                catch { /* skip */ }
+                            }
+                        }
+                        finally { Release(sessionEnum); }
+                    }
+                    finally { Release(mgr); }
+                }
+                finally { Release(device); }
+            }
+            finally { Release(enumerator); }
+        }
+        catch { /* COM hiccup */ }
+        return sessions;
+    }
+
+    public static float? GetSessionVolume(uint processId)
+    {
+        return IterateSession(processId, (sessionPtr) =>
+        {
+            var volume = Cast<ISimpleAudioVolume>(sessionPtr);
+            var hr = volume.GetMasterVolume(out var level);
+            return HResult.Succeeded(hr) ? level : (float?)null;
+        });
+    }
+
+    public static void SetSessionVolume(uint processId, float level)
+    {
+        IterateSession(processId, (sessionPtr) =>
+        {
+            var volume = Cast<ISimpleAudioVolume>(sessionPtr);
+            var hr = volume.SetMasterVolume(Math.Clamp(level, 0f, 1f), IntPtr.Zero);
+            HResult.ThrowIfFailed(hr);
+            return true;
+        });
+    }
+
+    private static TRes? IterateSession<TRes>(uint processId, Func<IntPtr, TRes?> action)
+    {
+        TRes? result = default;
+        try
+        {
+            var enumerator = CreateEnumerator();
+            try
+            {
+                var hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eConsole, out var devPtr);
+                if (!HResult.Succeeded(hr)) return result;
+                var device = Cast<IMMDevice>(devPtr);
+
+                try
+                {
+                    var iid = typeof(IAudioSessionManager2).GUID;
+                    hr = device.Activate(ref iid, Clsctx.CLSCTX_ALL, IntPtr.Zero, out var mgrPtr);
+                    if (!HResult.Succeeded(hr)) return result;
+                    var mgr = Cast<IAudioSessionManager2>(mgrPtr);
+
+                    try
+                    {
+                        hr = mgr.GetSessionEnumerator(out var enumPtr);
+                        if (!HResult.Succeeded(hr)) return result;
+                        var sessionEnum = Cast<IAudioSessionEnumerator>(enumPtr);
+
+                        try
+                        {
+                            hr = sessionEnum.GetCount(out var count);
+                            if (!HResult.Succeeded(hr)) return result;
+
+                            for (int i = 0; i < count; i++)
+                            {
+                                hr = sessionEnum.GetSession(i, out var sessionPtr);
+                                if (!HResult.Succeeded(hr)) continue;
+
+                                try
+                                {
+                                    var control = Cast<IAudioSessionControl2>(sessionPtr);
+                                    try
+                                    {
+                                        hr = control.GetProcessId(out var pid);
+                                        if (!HResult.Succeeded(hr) || pid != processId) continue;
+
+                                        result = action(sessionPtr);
+                                        return result;
+                                    }
+                                    finally { Release(control); }
+                                }
+                                catch { /* skip */ }
+                            }
+                        }
+                        finally { Release(sessionEnum); }
+                    }
+                    finally { Release(mgr); }
+                }
+                finally { Release(device); }
+            }
+            finally { Release(enumerator); }
+        }
+        catch { return result; }
+        return result;
+    }
+
+    private static string GetProcessNameSafe(uint processId)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById((int)processId);
+            return process.ProcessName;
+        }
+        catch { return $"PID {processId}"; }
     }
 
     // ── helpers ────────────────────────────────────────────────

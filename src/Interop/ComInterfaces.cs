@@ -174,3 +174,110 @@ internal partial interface IAudioEndpointVolume
     [PreserveSig]
     int GetVolumeRange(out float volumeMinDB, out float volumeMaxDB, out float volumeStepDB);
 }
+
+// ── Per-app audio session interfaces ─────────────────────
+
+[GeneratedComInterface]
+[Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8")]
+internal partial interface ISimpleAudioVolume
+{
+    [PreserveSig]
+    int SetMasterVolume(float level, IntPtr eventContext);
+
+    [PreserveSig]
+    int GetMasterVolume(out float level);
+
+    [PreserveSig]
+    int SetMute(int mute, IntPtr eventContext);
+
+    [PreserveSig]
+    int GetMute(out int mute);
+}
+
+[GeneratedComInterface]
+[Guid("BFB7FF88-7239-4FC9-8FA2-077C250B02D0")]
+internal partial interface IAudioSessionControl2
+{
+    // IAudioSessionControl methods
+    [PreserveSig]
+    int GetState(out int state);
+
+    [PreserveSig]
+    int GetDisplayName(out IntPtr namePtr);
+
+    [PreserveSig]
+    int SetDisplayName(IntPtr displayName, IntPtr eventContext);
+
+    [PreserveSig]
+    int GetIconPath(out IntPtr pathPtr);
+
+    [PreserveSig]
+    int SetIconPath(IntPtr iconPath, IntPtr eventContext);
+
+    [PreserveSig]
+    int GetGroupingParam(out Guid param);
+
+    [PreserveSig]
+    int SetGroupingParam(Guid grouping, IntPtr eventContext);
+
+    [PreserveSig]
+    int RegisterAudioSessionNotification(IntPtr notifications);
+
+    [PreserveSig]
+    int UnregisterAudioSessionNotification(IntPtr notifications);
+
+    // IAudioSessionControl2 methods
+    [PreserveSig]
+    int GetSessionIdentifier(out IntPtr idPtr);
+
+    [PreserveSig]
+    int GetSessionInstanceIdentifier(out IntPtr idPtr);
+
+    [PreserveSig]
+    int GetProcessId(out uint processId);
+
+    [PreserveSig]
+    int IsSystemSoundsSession();
+
+    [PreserveSig]
+    int SetDuckingPreference(int optOut);
+}
+
+[GeneratedComInterface]
+[Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8")]
+internal partial interface IAudioSessionEnumerator
+{
+    [PreserveSig]
+    int GetCount(out int count);
+
+    [PreserveSig]
+    int GetSession(int index, out IntPtr sessionControlPtr);
+}
+
+[GeneratedComInterface]
+[Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F")]
+internal partial interface IAudioSessionManager2
+{
+    // IAudioSessionManager methods
+    [PreserveSig]
+    int GetAudioSessionControl(IntPtr audioSessionGuid, uint streamCount, out IntPtr sessionControl);
+
+    [PreserveSig]
+    int GetSimpleAudioVolume(IntPtr audioSessionGuid, uint streamCount, out IntPtr audioVolume);
+
+    // IAudioSessionManager2 methods
+    [PreserveSig]
+    int GetSessionEnumerator(out IntPtr sessionEnumPtr);
+
+    [PreserveSig]
+    int RegisterDuckNotification(IntPtr sessionDisplayName, IntPtr notification);
+
+    [PreserveSig]
+    int UnregisterDuckNotification(IntPtr notification);
+
+    [PreserveSig]
+    int RegisterSessionNotification(IntPtr sessionNotification);
+
+    [PreserveSig]
+    int UnregisterSessionNotification(IntPtr sessionNotification);
+}

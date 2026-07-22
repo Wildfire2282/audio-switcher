@@ -14,9 +14,16 @@ internal enum ERole : uint
     eConsole = 0,
     eMultimedia = 1,
     eCommunications = 2,
+ }
+
+internal enum AudioSessionState : int
+{
+    Active = 0,
+    Inactive = 1,
+    Expired = 2,
 }
 
-[Flags]
+ [Flags]
 internal enum DeviceState : uint
 {
     Active = 0x00000001,

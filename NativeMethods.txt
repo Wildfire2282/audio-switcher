@@ -39,7 +39,12 @@ MMDeviceEnumerator
 IMMDeviceCollection
 IMMDevice
 IPropertyStore
-IAudioEndpointVolume
+IAudioSessionControl2
+IAudioSessionEnumerator
+IAudioSessionManager2
+ ISimpleAudioVolume
+ISimpleAudioVolume
+
 MSLLHOOKSTRUCT
 WNDCLASSEXW
 RECT

@@ -395,18 +395,19 @@ internal sealed class TrayApp : IDisposable
 
     private static HICON LoadIcon(Theme theme)
     {
-        var resourceName = theme == Theme.Dark ? "assets.icon_dark.png" : "assets.icon_light.png";
+        var isDark = theme == Theme.Dark;
+        var resourceName = isDark ? "AudioSwitcher.assets.icon_dark.png" : "AudioSwitcher.assets.icon_light.png";
         using var stream = typeof(Program).Assembly.GetManifestResourceStream(resourceName);
         if (stream == null)
-            return CreateFallbackIcon(theme);
+            return CreateFallbackIcon(isDark);
 
         using var bitmap = new Bitmap(stream);
         return new HICON(bitmap.GetHicon());
     }
 
-    private static HICON CreateFallbackIcon(Theme theme)
+    private static HICON CreateFallbackIcon(bool isDark)
     {
-        var color = theme == Theme.Dark
+        var color = isDark
             ? Color.FromArgb(0xE6, 0xE6, 0xE6)
             : Color.FromArgb(0x36, 0x36, 0x36);
 
