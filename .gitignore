@@ -1,13 +1,11 @@
-# Rust build outputs
-/target
-/build
-
 # IDE / Editor
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
+*.user
+*.suo
 
 # Windows
 Thumbs.db
@@ -21,9 +19,13 @@ $RECYCLE.BIN/
 # Logs
 *.log
 
-
 # .NET build outputs
 bin/
 obj/
-*.exe
 *.pdb
+
+# Dev tooling / AI
+.reasonix/
+
+# Rust target (historical)
+target/

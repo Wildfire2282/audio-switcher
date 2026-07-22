@@ -10,12 +10,13 @@ using Windows.Win32.System.Com;
 internal static class Program
 {
     private const string MutexName = "Global\\AudioSwitcherTray";
+    private static readonly IntPtr DpiContextPerMonitorAwareV2 = new(-4);
 
     [STAThread]
     static void Main()
     {
         // Per-monitor DPI v2 for crisp text on high-DPI displays.
-        _ = NativeMethods.SetProcessDpiAwarenessContext(new IntPtr(-4));
+        _ = NativeMethods.SetProcessDpiAwarenessContext(DpiContextPerMonitorAwareV2);
 
         // STA is required for COM message pumping; Core Audio works fine in STA.
         unsafe

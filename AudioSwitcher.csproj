@@ -31,12 +31,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="assets\icon_dark.png">
-      <LogicalName>assets.icon_dark.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="assets\icon_light.png">
-      <LogicalName>assets.icon_light.png</LogicalName>
-    </EmbeddedResource>
+    <EmbeddedResource Include="assets\icon.png" />
   </ItemGroup>
 
   <ItemGroup>

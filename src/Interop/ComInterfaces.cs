@@ -175,109 +175,72 @@ internal partial interface IAudioEndpointVolume
     int GetVolumeRange(out float volumeMinDB, out float volumeMaxDB, out float volumeStepDB);
 }
 
-// ── Per-app audio session interfaces ─────────────────────
+// ── Device change notification callback ────────────────────
+
+internal delegate void DeviceChangeCallback(string? defaultDeviceId);
 
 [GeneratedComInterface]
-[Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8")]
-internal partial interface ISimpleAudioVolume
+[Guid("7991EEC9-7E89-4D85-8390-6C703CEC60C0")]
+internal partial interface IMMNotificationClient
 {
     [PreserveSig]
-    int SetMasterVolume(float level, IntPtr eventContext);
+    int OnDeviceStateChanged(IntPtr pwstrDeviceId, DeviceState dwNewState);
 
     [PreserveSig]
-    int GetMasterVolume(out float level);
+    int OnDeviceAdded(IntPtr pwstrDeviceId);
 
     [PreserveSig]
-    int SetMute(int mute, IntPtr eventContext);
+    int OnDeviceRemoved(IntPtr pwstrDeviceId);
 
     [PreserveSig]
-    int GetMute(out int mute);
+    int OnDefaultDeviceChanged(EDataFlow flow, ERole role, IntPtr pwstrDefaultDeviceId);
+
+    [PreserveSig]
+    int OnPropertyValueChanged(IntPtr pwstrDeviceId, PropertyKey key);
 }
 
-[GeneratedComInterface]
-[Guid("BFB7FF88-7239-4FC9-8FA2-077C250B02D0")]
-internal partial interface IAudioSessionControl2
+[GeneratedComClass]
+internal sealed partial class DeviceNotificationClient : IMMNotificationClient
 {
-    // IAudioSessionControl methods
-    [PreserveSig]
-    int GetState(out int state);
+    private readonly DeviceChangeCallback _callback;
 
-    [PreserveSig]
-    int GetDisplayName(out IntPtr namePtr);
+    public DeviceNotificationClient(DeviceChangeCallback callback)
+    {
+        _callback = callback;
+    }
 
-    [PreserveSig]
-    int SetDisplayName(IntPtr displayName, IntPtr eventContext);
+    public int OnDeviceStateChanged(IntPtr pwstrDeviceId, DeviceState dwNewState)
+    {
+        _callback(null);
+        return 0;
+    }
 
-    [PreserveSig]
-    int GetIconPath(out IntPtr pathPtr);
+    public int OnDeviceAdded(IntPtr pwstrDeviceId)
+    {
+        _callback(null);
+        return 0;
+    }
 
-    [PreserveSig]
-    int SetIconPath(IntPtr iconPath, IntPtr eventContext);
+    public int OnDeviceRemoved(IntPtr pwstrDeviceId)
+    {
+        _callback(null);
+        return 0;
+    }
 
-    [PreserveSig]
-    int GetGroupingParam(out Guid param);
+    public int OnDefaultDeviceChanged(EDataFlow flow, ERole role, IntPtr pwstrDefaultDeviceId)
+    {
+        if (flow == EDataFlow.eRender && role == ERole.eConsole)
+        {
+            var id = pwstrDefaultDeviceId != IntPtr.Zero
+                ? Marshal.PtrToStringUni(pwstrDefaultDeviceId)
+                : null;
+            _callback(id);
+        }
+        return 0;
+    }
 
-    [PreserveSig]
-    int SetGroupingParam(Guid grouping, IntPtr eventContext);
-
-    [PreserveSig]
-    int RegisterAudioSessionNotification(IntPtr notifications);
-
-    [PreserveSig]
-    int UnregisterAudioSessionNotification(IntPtr notifications);
-
-    // IAudioSessionControl2 methods
-    [PreserveSig]
-    int GetSessionIdentifier(out IntPtr idPtr);
-
-    [PreserveSig]
-    int GetSessionInstanceIdentifier(out IntPtr idPtr);
-
-    [PreserveSig]
-    int GetProcessId(out uint processId);
-
-    [PreserveSig]
-    int IsSystemSoundsSession();
-
-    [PreserveSig]
-    int SetDuckingPreference(int optOut);
-}
-
-[GeneratedComInterface]
-[Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8")]
-internal partial interface IAudioSessionEnumerator
-{
-    [PreserveSig]
-    int GetCount(out int count);
-
-    [PreserveSig]
-    int GetSession(int index, out IntPtr sessionControlPtr);
-}
-
-[GeneratedComInterface]
-[Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F")]
-internal partial interface IAudioSessionManager2
-{
-    // IAudioSessionManager methods
-    [PreserveSig]
-    int GetAudioSessionControl(IntPtr audioSessionGuid, uint streamCount, out IntPtr sessionControl);
-
-    [PreserveSig]
-    int GetSimpleAudioVolume(IntPtr audioSessionGuid, uint streamCount, out IntPtr audioVolume);
-
-    // IAudioSessionManager2 methods
-    [PreserveSig]
-    int GetSessionEnumerator(out IntPtr sessionEnumPtr);
-
-    [PreserveSig]
-    int RegisterDuckNotification(IntPtr sessionDisplayName, IntPtr notification);
-
-    [PreserveSig]
-    int UnregisterDuckNotification(IntPtr notification);
-
-    [PreserveSig]
-    int RegisterSessionNotification(IntPtr sessionNotification);
-
-    [PreserveSig]
-    int UnregisterSessionNotification(IntPtr sessionNotification);
+    public int OnPropertyValueChanged(IntPtr pwstrDeviceId, PropertyKey key)
+    {
+        return 0;
+    }
 }

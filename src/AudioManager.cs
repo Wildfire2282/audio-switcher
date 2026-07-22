@@ -1,15 +1,28 @@
 namespace AudioSwitcher;
 
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 using AudioSwitcher.Interop;
 
  internal sealed record AudioDevice(string Id, string Name);
-internal sealed record AudioSessionInfo(uint ProcessId, string DisplayName);
 
 internal static class AudioManager
 {
     private const float VolumeStep = 0.01f;
+
+    // ── Device enumeration cache ────────────────────────────────
+    private static List<AudioDevice>? _cachedDevices;
+    private static DateTime _devicesCacheTime;
+    private static string? _cachedDefaultId;
+    private static DateTime _defaultIdCacheTime;
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMilliseconds(800);
+
+    public static void InvalidateDeviceCache()
+    {
+        _cachedDevices = null;
+        _cachedDefaultId = null;
+    }
 
     public static List<AudioDevice> EnumerateRenderEndpoints()
     {
@@ -45,18 +58,38 @@ internal static class AudioManager
                             }
                             finally { Release(device); }
                         }
-                        catch { /* skip */ }
+                        catch { Debug.WriteLine($"[AudioSwitcher] EnumerateRenderEndpoints: skip device"); }
                     }
                 }
                 finally { Release(collection); }
             }
             finally { Release(enumerator); }
         }
-        catch { /* COM hiccup */ }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] EnumerateRenderEndpoints: {ex.Message}"); }
+
+        if (devices.Count > 0)
+        {
+            _cachedDevices = devices;
+            _devicesCacheTime = DateTime.UtcNow;
+        }
         return devices;
     }
 
+    public static List<AudioDevice> EnumerateRenderEndpointsCached()
+    {
+        if (_cachedDevices != null && DateTime.UtcNow - _devicesCacheTime < CacheTtl)
+            return _cachedDevices;
+        return EnumerateRenderEndpoints();
+    }
+
     public static string? GetCurrentDefaultId()
+    {
+        if (_cachedDefaultId != null && DateTime.UtcNow - _defaultIdCacheTime < CacheTtl)
+            return _cachedDefaultId;
+        return RefreshDefaultId();
+    }
+
+    private static string? RefreshDefaultId()
     {
         try
         {
@@ -66,12 +99,21 @@ internal static class AudioManager
                 var hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eConsole, out var devPtr);
                 if (!HResult.Succeeded(hr)) return null;
                 var device = Cast<IMMDevice>(devPtr);
-                try { return GetDeviceId(device); }
+                try
+                {
+                    var id = GetDeviceId(device);
+                    if (!string.IsNullOrEmpty(id))
+                    {
+                        _cachedDefaultId = id;
+                        _defaultIdCacheTime = DateTime.UtcNow;
+                    }
+                    return id;
+                }
                 finally { Release(device); }
             }
             finally { Release(enumerator); }
         }
-        catch { return null; }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] RefreshDefaultId: {ex.Message}"); return null; }
     }
 
     public static void SetDefault(string deviceId)
@@ -117,174 +159,68 @@ internal static class AudioManager
         finally { Release(volume); }
     }
 
-    // ── per-app audio session methods ──────────────────────────────
-
-    public static List<AudioSessionInfo> EnumerateSessions()
+    public static bool? GetMute()
     {
-        var sessions = new List<AudioSessionInfo>();
+        var volume = GetEndpointVolume();
+        if (volume == null) return null;
         try
         {
-            var enumerator = CreateEnumerator();
-            try
-            {
-                var hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eConsole, out var devPtr);
-                if (!HResult.Succeeded(hr)) return sessions;
-                var device = Cast<IMMDevice>(devPtr);
-
-                try
-                {
-                    var iid = typeof(IAudioSessionManager2).GUID;
-                    hr = device.Activate(ref iid, Clsctx.CLSCTX_ALL, IntPtr.Zero, out var mgrPtr);
-                    if (!HResult.Succeeded(hr)) return sessions;
-                    var mgr = Cast<IAudioSessionManager2>(mgrPtr);
-
-                    try
-                    {
-                        hr = mgr.GetSessionEnumerator(out var enumPtr);
-                        if (!HResult.Succeeded(hr)) return sessions;
-                        var sessionEnum = Cast<IAudioSessionEnumerator>(enumPtr);
-
-                        try
-                        {
-                            hr = sessionEnum.GetCount(out var count);
-                            if (!HResult.Succeeded(hr)) return sessions;
-
-                            for (int i = 0; i < count; i++)
-                            {
-                                hr = sessionEnum.GetSession(i, out var sessionPtr);
-                                if (!HResult.Succeeded(hr)) continue;
-
-                                try
-                                {
-                                    hr = Cast<IAudioSessionControl2>(sessionPtr).GetState(out var state);
-                                    if (!HResult.Succeeded(hr) || state != 0) continue;
-
-                                    hr = Cast<IAudioSessionControl2>(sessionPtr).GetProcessId(out var pid);
-                                    if (!HResult.Succeeded(hr)) continue;
-
-                                    hr = Cast<IAudioSessionControl2>(sessionPtr).GetDisplayName(out var namePtr);
-                                    string name = string.Empty;
-                                    if (HResult.Succeeded(hr) && namePtr != IntPtr.Zero)
-                                    {
-                                        try { name = Marshal.PtrToStringUni(namePtr) ?? string.Empty; }
-                                        finally { NativeMethods.CoTaskMemFree(namePtr); }
-                                    }
-
-                                    if (string.IsNullOrWhiteSpace(name))
-                                        name = GetProcessNameSafe(pid);
-
-                                    sessions.Add(new AudioSessionInfo(pid, name));
-                                }
-                                catch { /* skip */ }
-                            }
-                        }
-                        finally { Release(sessionEnum); }
-                    }
-                    finally { Release(mgr); }
-                }
-                finally { Release(device); }
-            }
-            finally { Release(enumerator); }
+            var hr = volume.GetMute(out var mute);
+            return HResult.Succeeded(hr) ? mute != 0 : null;
         }
-        catch { /* COM hiccup */ }
-        return sessions;
+        finally { Release(volume); }
     }
 
-    public static float? GetSessionVolume(uint processId)
+    public static void ToggleMute()
     {
-        return IterateSession(processId, (sessionPtr) =>
-        {
-            var volume = Cast<ISimpleAudioVolume>(sessionPtr);
-            var hr = volume.GetMasterVolume(out var level);
-            return HResult.Succeeded(hr) ? level : (float?)null;
-        });
-    }
-
-    public static void SetSessionVolume(uint processId, float level)
-    {
-        IterateSession(processId, (sessionPtr) =>
-        {
-            var volume = Cast<ISimpleAudioVolume>(sessionPtr);
-            var hr = volume.SetMasterVolume(Math.Clamp(level, 0f, 1f), IntPtr.Zero);
-            HResult.ThrowIfFailed(hr);
-            return true;
-        });
-    }
-
-    private static TRes? IterateSession<TRes>(uint processId, Func<IntPtr, TRes?> action)
-    {
-        TRes? result = default;
+        var volume = GetEndpointVolume();
+        if (volume == null) return;
         try
         {
-            var enumerator = CreateEnumerator();
-            try
-            {
-                var hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eConsole, out var devPtr);
-                if (!HResult.Succeeded(hr)) return result;
-                var device = Cast<IMMDevice>(devPtr);
-
-                try
-                {
-                    var iid = typeof(IAudioSessionManager2).GUID;
-                    hr = device.Activate(ref iid, Clsctx.CLSCTX_ALL, IntPtr.Zero, out var mgrPtr);
-                    if (!HResult.Succeeded(hr)) return result;
-                    var mgr = Cast<IAudioSessionManager2>(mgrPtr);
-
-                    try
-                    {
-                        hr = mgr.GetSessionEnumerator(out var enumPtr);
-                        if (!HResult.Succeeded(hr)) return result;
-                        var sessionEnum = Cast<IAudioSessionEnumerator>(enumPtr);
-
-                        try
-                        {
-                            hr = sessionEnum.GetCount(out var count);
-                            if (!HResult.Succeeded(hr)) return result;
-
-                            for (int i = 0; i < count; i++)
-                            {
-                                hr = sessionEnum.GetSession(i, out var sessionPtr);
-                                if (!HResult.Succeeded(hr)) continue;
-
-                                try
-                                {
-                                    var control = Cast<IAudioSessionControl2>(sessionPtr);
-                                    try
-                                    {
-                                        hr = control.GetProcessId(out var pid);
-                                        if (!HResult.Succeeded(hr) || pid != processId) continue;
-
-                                        result = action(sessionPtr);
-                                        return result;
-                                    }
-                                    finally { Release(control); }
-                                }
-                                catch { /* skip */ }
-                            }
-                        }
-                        finally { Release(sessionEnum); }
-                    }
-                    finally { Release(mgr); }
-                }
-                finally { Release(device); }
-            }
-            finally { Release(enumerator); }
+            var hr = volume.GetMute(out var mute); HResult.ThrowIfFailed(hr);
+            hr = volume.SetMute(mute != 0 ? 0 : 1, IntPtr.Zero); HResult.ThrowIfFailed(hr);
         }
-        catch { return result; }
-        return result;
-    }
-
-    private static string GetProcessNameSafe(uint processId)
-    {
-        try
-        {
-            using var process = System.Diagnostics.Process.GetProcessById((int)processId);
-            return process.ProcessName;
-        }
-        catch { return $"PID {processId}"; }
+        finally { Release(volume); }
     }
 
     // ── helpers ────────────────────────────────────────────────
+
+    private static IMMDeviceEnumerator? _enumerator;
+    private static DeviceNotificationClient? _notificationClient;
+
+    public static void RegisterDeviceNotifications(DeviceChangeCallback callback)
+    {
+        try
+        {
+            if (_notificationClient != null) return;
+            _notificationClient = new DeviceNotificationClient(callback);
+            var enumerator = CreateEnumerator();
+            _enumerator = enumerator;
+            var comPtr = Marshal.GetComInterfaceForObject<DeviceNotificationClient, IMMNotificationClient>(_notificationClient);
+            var hr = enumerator.RegisterEndpointNotificationCallback(comPtr);
+            _ = Marshal.Release(comPtr);
+            if (!HResult.Succeeded(hr))
+            {
+                _enumerator = null;
+                _notificationClient = null;
+            }
+        }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] RegisterDeviceNotifications: {ex.Message}"); }
+    }
+
+    public static void UnregisterDeviceNotifications()
+    {
+        if (_enumerator == null || _notificationClient == null) return;
+        try
+        {
+            var comPtr = Marshal.GetComInterfaceForObject<DeviceNotificationClient, IMMNotificationClient>(_notificationClient);
+            _ = _enumerator.UnregisterEndpointNotificationCallback(comPtr);
+            _ = Marshal.Release(comPtr);
+        }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] UnregisterDeviceNotifications: {ex.Message}"); }
+        _enumerator = null;
+        _notificationClient = null;
+    }
 
     private static IAudioEndpointVolume? GetEndpointVolume()
     {
@@ -308,7 +244,7 @@ internal static class AudioManager
             }
             finally { Release(enumerator); }
         }
-        catch { return null; }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] GetEndpointVolume: {ex.Message}"); return null; }
     }
 
     private static IMMDeviceEnumerator CreateEnumerator()

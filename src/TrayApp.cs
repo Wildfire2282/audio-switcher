@@ -1,5 +1,6 @@
 namespace AudioSwitcher;
 
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
@@ -31,9 +32,10 @@ internal sealed class TrayApp : IDisposable
 
         RegisterWindowClass();
         CreateMessageWindow();
-        _icon = LoadIcon(ThemeDetector.Detect());
+        _icon = LoadIcon();
         AddTrayIcon();
         InstallWheelHook();
+        RegisterDeviceHotplug();
     }
 
     public void RunMessageLoop()
@@ -48,14 +50,13 @@ internal sealed class TrayApp : IDisposable
     public void Dispose()
     {
         RemoveTrayIcon();
-
-
         if (!_hookHandle.IsNull)
         {
             PInvoke.UnhookWindowsHookEx(_hookHandle);
             _hookHandle = default;
         }
         _mouseHookProc = null;
+        AudioManager.UnregisterDeviceNotifications();
 
         if (!_icon.IsNull)
         {
@@ -115,7 +116,7 @@ internal sealed class TrayApp : IDisposable
                 "AudioSwitcher",
                 WINDOW_STYLE.WS_OVERLAPPED,
                 0, 0, 0, 0,
-                new HWND(-3),
+                HWND.HWND_MESSAGE,
                 null,
                 hInstanceSafe,
                 null);
@@ -173,6 +174,24 @@ internal sealed class TrayApp : IDisposable
             Marshal.ThrowExceptionForHR(Marshal.GetHRForLastWin32Error());
     }
 
+    private void RegisterDeviceHotplug()
+    {
+        AudioManager.RegisterDeviceNotifications(defaultId =>
+        {
+            AudioManager.InvalidateDeviceCache();
+            // Refresh the tooltip to show current device/volume.
+            if (AudioManager.GetVolumeScalar() is float volume)
+            {
+                var pct = (int)Math.Round(volume * 100);
+                UpdateTooltip(BuildVolumeTooltip(pct));
+            }
+            else
+            {
+                UpdateTooltip(BuildVolumeTooltip(0));
+            }
+        });
+    }
+
     private LRESULT MouseHookProc(int nCode, WPARAM wParam, LPARAM lParam)
     {
         if (nCode >= 0)
@@ -198,7 +217,7 @@ internal sealed class TrayApp : IDisposable
                                     UpdateTooltip(BuildVolumeTooltip(pct));
                                 }
                             }
-                            catch { /* ignore */ }
+                            catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] MouseHookProc: {ex.Message}"); }
                         }
                     }
                 }
@@ -214,7 +233,7 @@ internal sealed class TrayApp : IDisposable
         var defaultId = AudioManager.GetCurrentDefaultId();
         if (defaultId != null)
         {
-            var device = AudioManager.EnumerateRenderEndpoints()
+            var device = AudioManager.EnumerateRenderEndpointsCached()
                 .FirstOrDefault(d => d.Id == defaultId);
             if (device != null)
                 name = device.Name;
@@ -238,9 +257,27 @@ internal sealed class TrayApp : IDisposable
 
     private static void CopyToTip(ref NOTIFYICONDATAW data, string text)
     {
-        var tip = text[..Math.Min(text.Length, 127)];
-        for (var i = 0; i < tip.Length; i++)
-            data.szTip[i] = tip[i];
+        var len = Math.Min(text.Length, 127);
+        for (var i = 0; i < len; i++)
+            data.szTip[i] = text[i];
+    }
+
+    private static void ShowBalloonTip(string text)
+    {
+        var data = new NOTIFYICONDATAW
+        {
+            cbSize = (uint)Marshal.SizeOf<NOTIFYICONDATAW>(),
+            hWnd = _instance!._hwnd,
+            uID = IconId,
+            uFlags = NOTIFY_ICON_DATA_FLAGS.NIF_INFO | NOTIFY_ICON_DATA_FLAGS.NIF_SHOWTIP,
+        };
+        data.Anonymous.uTimeout = 2000;
+        var len = Math.Min(text.Length, 255);
+        for (var i = 0; i < len; i++)
+            data.szInfo[i] = text[i];
+        data.dwInfoFlags = NOTIFY_ICON_INFOTIP_FLAGS.NIIF_NONE;
+
+        _ = PInvoke.Shell_NotifyIcon(NOTIFY_ICON_MESSAGE.NIM_MODIFY, in data);
     }
 
     private unsafe void ShowContextMenu()
@@ -316,8 +353,16 @@ internal sealed class TrayApp : IDisposable
     {
         if (deviceMap.TryGetValue(cmd, out var deviceId))
         {
-            try { AudioManager.SetDefault(deviceId); }
-            catch { /* transient COM hiccup */ }
+            try
+            {
+                AudioManager.SetDefault(deviceId);
+                var deviceName = AudioManager.EnumerateRenderEndpointsCached()
+                    .FirstOrDefault(d => d.Id == deviceId)?.Name ?? deviceId;
+                ShowBalloonTip(string.Format(Locale.IsZh
+                    ? "已切换到: {0}"
+                    : "Switched to: {0}", deviceName));
+            }
+            catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] SetDefault: {ex.Message}"); }
             return;
         }
 
@@ -341,11 +386,28 @@ internal sealed class TrayApp : IDisposable
     {
         switch (message)
         {
+            case 0x0202: // WM_LBUTTONUP
+                ToggleMute();
+                break;
             case PInvoke.WM_RBUTTONUP:
             case PInvoke.WM_CONTEXTMENU:
                 ShowContextMenu();
                 break;
         }
+    }
+
+    private void ToggleMute()
+    {
+        AudioManager.ToggleMute();
+        var isMuted = AudioManager.GetMute();
+        var volume = AudioManager.GetVolumeScalar();
+        var pct = (int)Math.Round((volume ?? 0) * 100);
+
+        var label = isMuted == true
+            ? Locale.T("已静音", "Muted")
+            : $"{pct}%";
+        UpdateTooltip(BuildVolumeTooltip(pct));
+        ShowBalloonTip(label);
     }
 
 
@@ -393,28 +455,62 @@ internal sealed class TrayApp : IDisposable
         return PInvoke.DefWindowProc(hWnd, msg, wParam, lParam);
     }
 
-    private static HICON LoadIcon(Theme theme)
+    private static HICON LoadIcon()
     {
-        var isDark = theme == Theme.Dark;
-        var resourceName = isDark ? "AudioSwitcher.assets.icon_dark.png" : "AudioSwitcher.assets.icon_light.png";
+        const string resourceName = "AudioSwitcher.assets.icon.png";
         using var stream = typeof(Program).Assembly.GetManifestResourceStream(resourceName);
         if (stream == null)
-            return CreateFallbackIcon(isDark);
+            return CreateFallbackIcon();
 
         using var bitmap = new Bitmap(stream);
-        return new HICON(bitmap.GetHicon());
+        using var src = EnsureArgb(bitmap);
+
+        // GetHicon() does not preserve alpha channel — round-trip through
+        // Icon.Save to produce a proper .ico with correct transparency.
+        var rawHicon = src.GetHicon();
+        using var tempIcon = System.Drawing.Icon.FromHandle(rawHicon);
+        using var ms = new MemoryStream();
+        tempIcon.Save(ms);
+        ms.Position = 0;
+
+        PInvoke.DestroyIcon(new HICON(rawHicon));
+
+        var finalIcon = new System.Drawing.Icon(ms);
+        var handle = finalIcon.Handle;
+        GC.SuppressFinalize(finalIcon);
+
+        return new HICON(handle);
     }
 
-    private static HICON CreateFallbackIcon(bool isDark)
+    private static Bitmap EnsureArgb(Bitmap src)
     {
-        var color = isDark
-            ? Color.FromArgb(0xE6, 0xE6, 0xE6)
-            : Color.FromArgb(0x36, 0x36, 0x36);
+        var converted = new Bitmap(src.Width, src.Height, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(converted))
+        {
+            g.Clear(Color.Transparent);
+            g.DrawImage(src, 0, 0, src.Width, src.Height);
+        }
+        return converted;
+    }
+
+    private static HICON CreateFallbackIcon()
+    {
+        var foreColor = Color.FromArgb(0x36, 0x36, 0x36);
 
         using var bitmap = new Bitmap(32, 32, PixelFormat.Format32bppArgb);
         using (var g = Graphics.FromImage(bitmap))
         {
-            g.Clear(color);
+            g.Clear(Color.Transparent);
+            using var brush = new SolidBrush(foreColor);
+            using var pen = new Pen(foreColor, 2);
+            // Draw a simple speaker icon
+            g.FillRectangle(brush, 6, 12, 8, 8);
+            // Speaker cone (triangle pointing right)
+            var cone = new[] { new Point(14, 10), new Point(22, 6), new Point(22, 26) };
+            g.FillPolygon(brush, cone);
+            // Sound waves
+            g.DrawArc(pen, 20, 6, 8, 20, -60, 120);
+            g.DrawArc(pen, 24, 2, 10, 28, -60, 120);
         }
 
         return new HICON(bitmap.GetHicon());
@@ -426,6 +522,6 @@ internal sealed class TrayApp : IDisposable
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
         }
-        catch { /* ignore */ }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] OpenUrl: {ex.Message}"); }
     }
 }

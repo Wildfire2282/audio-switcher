@@ -44,16 +44,4 @@ internal static class TrayMenuBuilder
         return items;
     }
 
-    public static string? FindDeviceIdByMenuId(int menuId)
-    {
-        var index = menuId - FirstDeviceId;
-        if (index < 0)
-            return null;
-
-        var devices = AudioManager.EnumerateRenderEndpoints();
-        if (index >= devices.Count)
-            return null;
-
-        return devices[index].Id;
-    }
 }

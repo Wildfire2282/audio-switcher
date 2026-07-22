@@ -14,7 +14,7 @@ Right-click the tray icon to switch the default playback device directly — no 
 - **Wheel volume** — scroll over the tray icon to adjust volume, instant tooltip shows device name + percentage
 - **Auto-start** — toggle Windows startup from the menu
 - **About** — menu link to the GitHub repo
-- **Theme-aware** — auto-detects system theme (light/dark), picks matching tray icon
+- **Custom tray icon** — waveform icon embedded as resource, same across light/dark themes
 - **Single instance** — global mutex ensures only one instance runs
 - **AOT single-file** — published as a single native executable, no runtime required
 
@@ -88,7 +88,7 @@ Switching covers all three ERoles:
 
 ### Tray icon
 
-Two PNGs (light/dark) are embedded as resources. The matching icon is selected at startup based on the registry value `AppsUseLightTheme`.
+A single waveform icon (`assets/icon.png`) is embedded as a resource. It is converted to a proper `.ico` at runtime via `Icon.Save` to preserve the alpha channel, ensuring sharp rendering on any theme.
 
 ### Auto-start
 
@@ -137,7 +137,7 @@ Windows 系统托盘音频输出设备快速切换工具。
 - **滚轮调音** — 鼠标悬停托盘图标滚动滚轮调节音量，tooltip 即时显示设备名+百分比
 - **开机自启** — 菜单中一键启用/禁用 Windows 自动启动
 - **关于** — 菜单链接到 GitHub 仓库
-- **主题适配** — 自动检测系统主题（浅色/深色），选择对应图标
+- **自定义图标** — 波形图标作为嵌入资源，浅色/深色主题通用
 - **单实例** — 全局 Mutex 确保只有一个实例运行
 - **AOT 单文件** — 发布为单个原生可执行文件，无需运行时
 
@@ -211,7 +211,7 @@ tests/
 
 ### 托盘图标
 
-两张 PNG（浅色/深色）作为嵌入资源打包，启动时根据注册表 `AppsUseLightTheme` 选择对应图标。
+单个波形图标（`assets/icon.png`）作为嵌入资源。运行时通过 `Icon.Save` 转换为标准 `.ico` 格式以保留 Alpha 通道，在任何主题下都能清晰显示。
 
 ### 自启
 

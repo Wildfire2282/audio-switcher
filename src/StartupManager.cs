@@ -1,5 +1,6 @@
 namespace AudioSwitcher;
 
+using System.Diagnostics;
 using Microsoft.Win32;
 
 internal static class StartupManager
@@ -16,6 +17,7 @@ internal static class StartupManager
         }
         catch
         {
+            Debug.WriteLine("[AudioSwitcher] StartupManager.IsEnabled: registry error");
             return false;
         }
     }
@@ -40,7 +42,7 @@ internal static class StartupManager
         }
         catch
         {
-            // Ignore registry errors.
+            Debug.WriteLine("[AudioSwitcher] StartupManager.SetEnabled: registry error");
         }
     }
 }

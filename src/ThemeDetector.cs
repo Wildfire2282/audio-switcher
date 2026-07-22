@@ -1,5 +1,6 @@
 namespace AudioSwitcher;
 
+using System.Diagnostics;
 using Microsoft.Win32;
 
 internal enum Theme
@@ -26,7 +27,7 @@ internal static class ThemeDetector
         }
         catch
         {
-            // Ignore registry errors.
+            Debug.WriteLine("[AudioSwitcher] ThemeDetector.Detect: registry error");
         }
         return Theme.Unknown;
     }

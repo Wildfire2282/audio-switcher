@@ -16,14 +16,7 @@ internal enum ERole : uint
     eCommunications = 2,
  }
 
-internal enum AudioSessionState : int
-{
-    Active = 0,
-    Inactive = 1,
-    Expired = 2,
-}
-
- [Flags]
+[Flags]
 internal enum DeviceState : uint
 {
     Active = 0x00000001,
@@ -37,11 +30,6 @@ internal static class Clsids
 {
     public static readonly Guid MMDeviceEnumerator = new("BCDE0395-E52F-467C-8E3D-C4579291692E");
     public static readonly Guid PolicyConfigClient = new("870af99c-171d-4f9e-af0d-e63df40c2bc9");
-}
-
-internal static class Iids
-{
-    public static readonly Guid IMMDeviceEnumerator = new("A95664D2-9614-4F35-A746-DE8DB63617E6");
 }
 
 internal static class Stgms
