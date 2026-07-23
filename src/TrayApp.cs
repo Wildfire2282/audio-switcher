@@ -589,7 +589,10 @@ internal sealed class TrayApp : IDisposable
 
         // Load the 16x16 entry directly — avoids Bitmap.GetHicon() alpha
         // issues and the MemoryStream round-trip used for the PNG resource.
-        using var icon = new System.Drawing.Icon(stream, 16, 16);
+        // Do NOT dispose the Icon wrapper: on .NET the wrapper owns the HICON
+        // and disposing it destroys the handle. TrayApp.Dispose calls
+        // DestroyIcon to release it.
+        var icon = new System.Drawing.Icon(stream, 16, 16);
         var handle = icon.Handle;
         GC.SuppressFinalize(icon);
 
