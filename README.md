@@ -37,6 +37,13 @@ Windows 系统托盘音频输出设备快速切换工具。
 | 关于 | 打开 GitHub 仓库 |
 | 退出 | 关闭程序 |
 
+## 技术栈
+
+- C# / .NET 10
+- Native Win32 P/Invoke (CsWin32 source generator)
+- Core Audio API
+- AOT + 单文件发布
+
 ## 下载安装
 
 前往 [Releases 页面](https://github.com/Wildfire2282/audio-switcher/releases) 下载 `audio-switcher.exe`，双击运行。
