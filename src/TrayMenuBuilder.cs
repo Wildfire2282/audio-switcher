@@ -14,11 +14,9 @@ internal static class TrayMenuBuilder
 {
     private const int FirstDeviceId = 1000;
 
-    public static List<TrayMenuItem> Build()
+    public static List<TrayMenuItem> Build(IReadOnlyList<AudioDevice> devices, string? currentId)
     {
         var items = new List<TrayMenuItem>();
-        var devices = AudioManager.EnumerateRenderEndpoints();
-        var currentId = AudioManager.GetCurrentDefaultId();
         var autostart = StartupManager.IsEnabled();
 
         if (devices.Count == 0)

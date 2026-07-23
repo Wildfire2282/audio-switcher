@@ -36,6 +36,8 @@ internal static class Program
         try
         {
             using var app = new TrayApp();
+            if (!app.IsInitialized())
+                return;
             app.RunMessageLoop();
         }
         finally

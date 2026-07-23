@@ -22,7 +22,7 @@ internal static class StartupManager
         }
     }
 
-    public static void SetEnabled(bool enabled)
+    public static bool SetEnabled(bool enabled)
     {
         try
         {
@@ -32,17 +32,21 @@ internal static class StartupManager
             if (enabled)
             {
                 var exePath = Environment.ProcessPath;
-                if (!string.IsNullOrEmpty(exePath))
-                    key.SetValue(ValueName, $"\"{exePath}\"");
+                if (string.IsNullOrEmpty(exePath))
+                    return false;
+                key.SetValue(ValueName, $"\"{exePath}\"");
             }
             else
             {
                 key.DeleteValue(ValueName, false);
             }
+
+            return true;
         }
         catch
         {
             Debug.WriteLine("[AudioSwitcher] StartupManager.SetEnabled: registry error");
+            return false;
         }
     }
 }

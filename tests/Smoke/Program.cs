@@ -6,6 +6,9 @@ unsafe
     PInvoke.CoInitializeEx(null, Windows.Win32.System.Com.COINIT.COINIT_MULTITHREADED);
 }
 
+var exitCode = 0;
+string? originalDefault = null;
+
 try
 {
     var devices = AudioManager.EnumerateRenderEndpoints();
@@ -14,24 +17,15 @@ try
         Console.WriteLine($"  - {d.Name}  ({d.Id})");
 
     if (devices.Count == 0)
-    {
-        Console.Error.WriteLine("[smoke] FAIL: no render endpoints");
-        Environment.Exit(1);
-    }
+        throw new InvalidOperationException("no render endpoints");
 
-    var originalDefault = AudioManager.GetCurrentDefaultId();
+    originalDefault = AudioManager.GetCurrentDefaultId();
     if (originalDefault == null)
-    {
-        Console.Error.WriteLine("[smoke] FAIL: current_default_id returned null");
-        Environment.Exit(1);
-    }
+        throw new InvalidOperationException("current_default_id returned null");
     Console.WriteLine($"[smoke] current default id = {originalDefault}");
 
     if (!devices.Any(d => d.Id == originalDefault))
-    {
-        Console.Error.WriteLine("[smoke] FAIL: current default id is not in the enumerated set");
-        Environment.Exit(1);
-    }
+        throw new InvalidOperationException("current default id is not in the enumerated set");
 
     var switched = 0;
     foreach (var d in devices)
@@ -42,10 +36,7 @@ try
         AudioManager.SetDefault(d.Id);
         var now = AudioManager.GetCurrentDefaultId();
         if (now != d.Id)
-        {
-            Console.Error.WriteLine($"[smoke] FAIL: switch to '{d.Id}' did not stick (got '{now}')");
-            Environment.Exit(1);
-        }
+            throw new InvalidOperationException($"switch to '{d.Id}' did not stick (got '{now}')");
         switched++;
         Console.WriteLine($"[smoke] switch ok -> {d.Name}");
     }
@@ -55,18 +46,39 @@ try
     else
         Console.WriteLine($"[smoke] all {switched} non-default switches round-tripped");
 
-    AudioManager.SetDefault(originalDefault);
-    var restored = AudioManager.GetCurrentDefaultId();
-    if (restored != originalDefault)
-    {
-        Console.Error.WriteLine("[smoke] FAIL: could not restore original default");
-        Environment.Exit(1);
-    }
-    Console.WriteLine("[smoke] restored original default ok");
-
     Console.WriteLine("[smoke] PASS");
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine($"[smoke] FAIL: {ex.Message}");
+    exitCode = 1;
 }
 finally
 {
+    if (originalDefault != null)
+    {
+        try
+        {
+            AudioManager.SetDefault(originalDefault);
+            var restored = AudioManager.GetCurrentDefaultId();
+            if (restored != originalDefault)
+            {
+                Console.Error.WriteLine("[smoke] FAIL: could not restore original default");
+                exitCode = 1;
+            }
+            else
+            {
+                Console.WriteLine("[smoke] restored original default ok");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[smoke] FAIL: restore failed: {ex.Message}");
+            exitCode = 1;
+        }
+    }
+
     PInvoke.CoUninitialize();
 }
+
+return exitCode;

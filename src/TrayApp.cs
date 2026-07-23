@@ -25,18 +25,34 @@ internal sealed class TrayApp : IDisposable
     private HWND _hwnd;
     private HHOOK _hookHandle;
     private HICON _icon;
+    private bool _trayIconAdded;
+    private bool _initFailed;
+
     public TrayApp()
     {
         _instance = this;
         _className = $"AudioSwitcherTray_{Guid.NewGuid():N}";
 
-        RegisterWindowClass();
-        CreateMessageWindow();
-        _icon = LoadIcon();
-        AddTrayIcon();
-        InstallWheelHook();
-        RegisterDeviceHotplug();
+        try { RegisterWindowClass(); }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] RegisterWindowClass failed: {ex.Message}"); _initFailed = true; return; }
+
+        try { CreateMessageWindow(); }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] CreateMessageWindow failed: {ex.Message}"); _initFailed = true; return; }
+
+        try { _icon = LoadIcon(); }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] LoadIcon failed: {ex.Message}"); }
+
+        try { AddTrayIcon(); _trayIconAdded = true; }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] AddTrayIcon failed: {ex.Message}"); }
+
+        try { InstallWheelHook(); }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] InstallWheelHook failed: {ex.Message}"); }
+
+        try { RegisterDeviceHotplug(); }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] RegisterDeviceHotplug failed: {ex.Message}"); }
     }
+
+    public bool IsInitialized() => !_initFailed && !_hwnd.IsNull;
 
     public void RunMessageLoop()
     {
@@ -49,7 +65,14 @@ internal sealed class TrayApp : IDisposable
 
     public void Dispose()
     {
-        RemoveTrayIcon();
+        if (_initFailed)
+        {
+            _instance = null;
+            return;
+        }
+
+        if (_trayIconAdded)
+            RemoveTrayIcon();
         if (!_hookHandle.IsNull)
         {
             PInvoke.UnhookWindowsHookEx(_hookHandle);
@@ -282,74 +305,76 @@ internal sealed class TrayApp : IDisposable
 
     private unsafe void ShowContextMenu()
     {
-        var hMenu = PInvoke.CreatePopupMenu();
-        if (hMenu.IsNull)
-            return;
-
-        try
+        while (true)
         {
-            var items = TrayMenuBuilder.Build();
-            var deviceMap = BuildDeviceMap();
+            var hMenu = PInvoke.CreatePopupMenu();
+            if (hMenu.IsNull)
+                return;
 
-            foreach (var item in items)
+            var refreshRequested = false;
+            try
             {
-                if (item.Separator)
-                {
-                    _ = PInvoke.AppendMenu(hMenu, MENU_ITEM_FLAGS.MF_SEPARATOR, 0, null);
-                }
-                else
-                {
-                    var flags = MENU_ITEM_FLAGS.MF_STRING;
-                    if (!item.Enabled)
-                        flags |= MENU_ITEM_FLAGS.MF_GRAYED;
-                    if (item.Checked)
-                        flags |= MENU_ITEM_FLAGS.MF_CHECKED;
+                var devices = AudioManager.EnumerateRenderEndpoints();
+                var currentId = AudioManager.GetCurrentDefaultId();
+                var items = TrayMenuBuilder.Build(devices, currentId);
+                var deviceMap = BuildDeviceMap(devices);
 
-                    unsafe
+                foreach (var item in items)
+                {
+                    if (item.Separator)
                     {
+                        _ = PInvoke.AppendMenu(hMenu, MENU_ITEM_FLAGS.MF_SEPARATOR, 0, null);
+                    }
+                    else
+                    {
+                        var flags = MENU_ITEM_FLAGS.MF_STRING;
+                        if (!item.Enabled)
+                            flags |= MENU_ITEM_FLAGS.MF_GRAYED;
+                        if (item.Checked)
+                            flags |= MENU_ITEM_FLAGS.MF_CHECKED;
+
                         fixed (char* pText = item.Text)
                         {
                             _ = PInvoke.AppendMenu(hMenu, flags, (nuint)(uint)item.Id, pText);
                         }
                     }
                 }
+
+                var pt = default(Point);
+                _ = PInvoke.GetCursorPos(out pt);
+                _ = PInvoke.SetForegroundWindow(_hwnd);
+
+                var cmd = PInvoke.TrackPopupMenu(
+                    hMenu,
+                    TRACK_POPUP_MENU_FLAGS.TPM_LEFTALIGN | TRACK_POPUP_MENU_FLAGS.TPM_RIGHTBUTTON | TRACK_POPUP_MENU_FLAGS.TPM_RETURNCMD | TRACK_POPUP_MENU_FLAGS.TPM_NONOTIFY,
+                    pt.X,
+                    pt.Y,
+                    0,
+                    _hwnd,
+                    (RECT*)null);
+
+                if (cmd.Value != 0)
+                    refreshRequested = ExecuteMenuCommand(cmd.Value, deviceMap);
             }
-
-            var pt = default(Point);
-            _ = PInvoke.GetCursorPos(out pt);
-
-            _ = PInvoke.SetForegroundWindow(_hwnd);
-
-            var cmd = PInvoke.TrackPopupMenu(
-                hMenu,
-                TRACK_POPUP_MENU_FLAGS.TPM_LEFTALIGN | TRACK_POPUP_MENU_FLAGS.TPM_RIGHTBUTTON | TRACK_POPUP_MENU_FLAGS.TPM_RETURNCMD | TRACK_POPUP_MENU_FLAGS.TPM_NONOTIFY,
-                pt.X,
-                pt.Y,
-                0,
-                _hwnd,
-                (RECT*)null);
-
-            if (cmd.Value != 0)
+            finally
             {
-                ExecuteMenuCommand(cmd.Value, deviceMap);
+                PInvoke.DestroyMenu(hMenu);
             }
-        }
-        finally
-        {
-            PInvoke.DestroyMenu(hMenu);
+
+            if (!refreshRequested)
+                return;
         }
     }
 
-    private static Dictionary<int, string> BuildDeviceMap()
+    private static Dictionary<int, string> BuildDeviceMap(IReadOnlyList<AudioDevice> devices)
     {
         var map = new Dictionary<int, string>();
-        var devices = AudioManager.EnumerateRenderEndpoints();
         for (var i = 0; i < devices.Count; i++)
             map[FirstDeviceId + i] = devices[i].Id;
         return map;
     }
 
-    private void ExecuteMenuCommand(int cmd, Dictionary<int, string> deviceMap)
+    private bool ExecuteMenuCommand(int cmd, Dictionary<int, string> deviceMap)
     {
         if (deviceMap.TryGetValue(cmd, out var deviceId))
         {
@@ -363,16 +388,25 @@ internal sealed class TrayApp : IDisposable
                     : "Switched to: {0}", deviceName));
             }
             catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] SetDefault: {ex.Message}"); }
-            return;
+            return false;
         }
 
         switch ((TrayMenuCommand)cmd)
         {
             case TrayMenuCommand.Refresh:
-                break;
+                AudioManager.InvalidateDeviceCache();
+                return true;
             case TrayMenuCommand.ToggleAutostart:
-                StartupManager.SetEnabled(!StartupManager.IsEnabled());
+            {
+                var target = !StartupManager.IsEnabled();
+                var success = StartupManager.SetEnabled(target);
+                ShowBalloonTip(success
+                    ? (target
+                        ? Locale.T("开机自动启动已开启", "Start with Windows: ON")
+                        : Locale.T("开机自动启动已关闭", "Start with Windows: OFF"))
+                    : Locale.T("设置开机自启失败", "Failed to set autostart"));
                 break;
+            }
             case TrayMenuCommand.About:
                 OpenUrl("https://github.com/Wildfire2282/audio-switcher");
                 break;
@@ -380,34 +414,49 @@ internal sealed class TrayApp : IDisposable
                 PInvoke.PostQuitMessage(0);
                 break;
         }
-    }
 
+        return false;
+    }
     private void OnTrayMessage(uint message)
     {
-        switch (message)
+        try
         {
-            case 0x0202: // WM_LBUTTONUP
-                ToggleMute();
-                break;
-            case PInvoke.WM_RBUTTONUP:
-            case PInvoke.WM_CONTEXTMENU:
-                ShowContextMenu();
-                break;
+            switch (message)
+            {
+                case 0x0202: // WM_LBUTTONUP
+                    ToggleMute();
+                    break;
+                case PInvoke.WM_RBUTTONUP:
+                case PInvoke.WM_CONTEXTMENU:
+                    ShowContextMenu();
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[AudioSwitcher] Tray message 0x{message:X8} failed: {ex.Message}");
         }
     }
 
     private void ToggleMute()
     {
-        AudioManager.ToggleMute();
-        var isMuted = AudioManager.GetMute();
-        var volume = AudioManager.GetVolumeScalar();
-        var pct = (int)Math.Round((volume ?? 0) * 100);
+        try
+        {
+            AudioManager.ToggleMute();
+            var isMuted = AudioManager.GetMute();
+            var volume = AudioManager.GetVolumeScalar();
+            var pct = (int)Math.Round((volume ?? 0) * 100);
 
-        var label = isMuted == true
-            ? Locale.T("已静音", "Muted")
-            : $"{pct}%";
-        UpdateTooltip(BuildVolumeTooltip(pct));
-        ShowBalloonTip(label);
+            var label = isMuted == true
+                ? Locale.T("已静音", "Muted")
+                : $"{pct}%";
+            UpdateTooltip(BuildVolumeTooltip(pct));
+            ShowBalloonTip(label);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[AudioSwitcher] ToggleMute: {ex.Message}");
+        }
     }
 
 

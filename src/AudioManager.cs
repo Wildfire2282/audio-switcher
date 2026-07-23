@@ -91,18 +91,23 @@ internal static class AudioManager
 
     private static string? RefreshDefaultId()
     {
+        return GetDefaultId(ERole.eConsole);
+    }
+
+    private static string? GetDefaultId(ERole role)
+    {
         try
         {
             var enumerator = CreateEnumerator();
             try
             {
-                var hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eConsole, out var devPtr);
+                var hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, role, out var devPtr);
                 if (!HResult.Succeeded(hr)) return null;
                 var device = Cast<IMMDevice>(devPtr);
                 try
                 {
                     var id = GetDeviceId(device);
-                    if (!string.IsNullOrEmpty(id))
+                    if (role == ERole.eConsole && !string.IsNullOrEmpty(id))
                     {
                         _cachedDefaultId = id;
                         _defaultIdCacheTime = DateTime.UtcNow;
@@ -113,24 +118,109 @@ internal static class AudioManager
             }
             finally { Release(enumerator); }
         }
-        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] RefreshDefaultId: {ex.Message}"); return null; }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] GetDefaultId: {ex.Message}"); return null; }
     }
 
     public static void SetDefault(string deviceId)
     {
+        var oldConsole = GetDefaultId(ERole.eConsole);
+        var oldMultimedia = GetDefaultId(ERole.eMultimedia);
+        var oldCommunications = GetDefaultId(ERole.eCommunications);
+        if (oldConsole == null || oldMultimedia == null || oldCommunications == null)
+            throw new InvalidOperationException("Unable to capture current default audio endpoints");
+
         var ptr = Marshal.StringToCoTaskMemUni(deviceId);
         try
         {
             var policy = CreatePolicyConfig();
             try
             {
-                var hr = policy.SetDefaultEndpoint(ptr, ERole.eConsole); HResult.ThrowIfFailed(hr);
-                hr = policy.SetDefaultEndpoint(ptr, ERole.eMultimedia); HResult.ThrowIfFailed(hr);
-                hr = policy.SetDefaultEndpoint(ptr, ERole.eCommunications); HResult.ThrowIfFailed(hr);
+                try
+                {
+                    var hr = policy.SetDefaultEndpoint(ptr, ERole.eConsole); HResult.ThrowIfFailed(hr);
+                    hr = policy.SetDefaultEndpoint(ptr, ERole.eMultimedia); HResult.ThrowIfFailed(hr);
+                    hr = policy.SetDefaultEndpoint(ptr, ERole.eCommunications); HResult.ThrowIfFailed(hr);
+                }
+                catch
+                {
+                    RestoreDefault(policy, oldConsole, ERole.eConsole);
+                    RestoreDefault(policy, oldMultimedia, ERole.eMultimedia);
+                    RestoreDefault(policy, oldCommunications, ERole.eCommunications);
+                    throw;
+                }
             }
-            finally { Release(policy); }
+            finally
+            {
+                Release(policy);
+                InvalidateDeviceCache();
+            }
         }
         finally { Marshal.FreeCoTaskMem(ptr); }
+    }
+
+    private static void RestoreDefault(IPolicyConfig policy, string deviceId, ERole role)
+    {
+        var restorePtr = Marshal.StringToCoTaskMemUni(deviceId);
+        try
+        {
+            var hr = policy.SetDefaultEndpoint(restorePtr, role);
+            if (!HResult.Succeeded(hr))
+                Debug.WriteLine($"[AudioSwitcher] RestoreDefault failed for {role}: 0x{hr:X8}");
+        }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] RestoreDefault failed for {role}: {ex.Message}"); }
+        finally { Marshal.FreeCoTaskMem(restorePtr); }
+    }
+
+    public static void RegisterDeviceNotifications(DeviceChangeCallback callback)
+    {
+        try
+        {
+            if (_notificationClient != null) return;
+
+            var notificationClient = new DeviceNotificationClient(callback);
+            var enumerator = CreateEnumerator();
+            var comPtr = ComHelpers.Wrappers.GetOrCreateComInterfaceForObject(
+                notificationClient, CreateComInterfaceFlags.None);
+            try
+            {
+                var hr = enumerator.RegisterEndpointNotificationCallback(comPtr);
+                HResult.ThrowIfFailed(hr);
+                _notificationClient = notificationClient;
+                _enumerator = enumerator;
+            }
+            finally
+            {
+                _ = Marshal.Release(comPtr);
+                if (_enumerator == null)
+                    Release(enumerator);
+            }
+        }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] RegisterDeviceNotifications: {ex.Message}"); }
+    }
+
+    public static void UnregisterDeviceNotifications()
+    {
+        if (_enumerator == null || _notificationClient == null) return;
+        try
+        {
+            var comPtr = ComHelpers.Wrappers.GetOrCreateComInterfaceForObject(
+                _notificationClient, CreateComInterfaceFlags.None);
+            try
+            {
+                _ = _enumerator.UnregisterEndpointNotificationCallback(comPtr);
+            }
+            finally
+            {
+                _ = Marshal.Release(comPtr);
+            }
+        }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] UnregisterDeviceNotifications: {ex.Message}"); }
+        finally
+        {
+            Release(_enumerator);
+            _enumerator = null;
+            _notificationClient = null;
+        }
     }
 
     public static void AdjustVolume(int notches)
@@ -188,39 +278,6 @@ internal static class AudioManager
     private static IMMDeviceEnumerator? _enumerator;
     private static DeviceNotificationClient? _notificationClient;
 
-    public static void RegisterDeviceNotifications(DeviceChangeCallback callback)
-    {
-        try
-        {
-            if (_notificationClient != null) return;
-            _notificationClient = new DeviceNotificationClient(callback);
-            var enumerator = CreateEnumerator();
-            _enumerator = enumerator;
-            var comPtr = Marshal.GetComInterfaceForObject<DeviceNotificationClient, IMMNotificationClient>(_notificationClient);
-            var hr = enumerator.RegisterEndpointNotificationCallback(comPtr);
-            _ = Marshal.Release(comPtr);
-            if (!HResult.Succeeded(hr))
-            {
-                _enumerator = null;
-                _notificationClient = null;
-            }
-        }
-        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] RegisterDeviceNotifications: {ex.Message}"); }
-    }
-
-    public static void UnregisterDeviceNotifications()
-    {
-        if (_enumerator == null || _notificationClient == null) return;
-        try
-        {
-            var comPtr = Marshal.GetComInterfaceForObject<DeviceNotificationClient, IMMNotificationClient>(_notificationClient);
-            _ = _enumerator.UnregisterEndpointNotificationCallback(comPtr);
-            _ = Marshal.Release(comPtr);
-        }
-        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] UnregisterDeviceNotifications: {ex.Message}"); }
-        _enumerator = null;
-        _notificationClient = null;
-    }
 
     private static IAudioEndpointVolume? GetEndpointVolume()
     {
