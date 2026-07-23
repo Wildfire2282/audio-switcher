@@ -587,12 +587,17 @@ internal sealed class TrayApp : IDisposable
         if (stream == null)
             return CreateFallbackIcon();
 
-        // Load the 16x16 entry directly — avoids Bitmap.GetHicon() alpha
-        // issues and the MemoryStream round-trip used for the PNG resource.
+        // Use the system small-icon size so the tray icon matches the DPI
+        // of the taskbar instead of forcing 16x16 and letting Windows scale.
         // Do NOT dispose the Icon wrapper: on .NET the wrapper owns the HICON
         // and disposing it destroys the handle. TrayApp.Dispose calls
         // DestroyIcon to release it.
-        var icon = new System.Drawing.Icon(stream, 16, 16);
+        var cx = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSMICON);
+        var cy = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYSMICON);
+        if (cx <= 0) cx = 16;
+        if (cy <= 0) cy = 16;
+
+        var icon = new System.Drawing.Icon(stream, cx, cy);
         var handle = icon.Handle;
         GC.SuppressFinalize(icon);
 

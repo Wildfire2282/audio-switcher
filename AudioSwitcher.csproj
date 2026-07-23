@@ -15,6 +15,7 @@
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- Icon -->
     <ApplicationIcon>assets\icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <NoWarn>$(NoWarn);IL2050;PInvoke004</NoWarn>
 
     <AssemblyName>audio-switcher</AssemblyName>
