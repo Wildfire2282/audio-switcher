@@ -129,10 +129,10 @@ internal partial interface IAudioEndpointVolume
     int GetChannelCount(out uint count);
 
     [PreserveSig]
-    int SetMasterVolumeLevel(float levelDB, IntPtr eventContext);
+    unsafe int SetMasterVolumeLevel(float levelDB, Guid* eventContext);
 
     [PreserveSig]
-    int SetMasterVolumeLevelScalar(float level, IntPtr eventContext);
+    unsafe int SetMasterVolumeLevelScalar(float level, Guid* eventContext);
 
     [PreserveSig]
     int GetMasterVolumeLevel(out float levelDB);
@@ -141,17 +141,19 @@ internal partial interface IAudioEndpointVolume
     int GetMasterVolumeLevelScalar(out float level);
 
     [PreserveSig]
-    int SetChannelVolumeLevel(uint channel, float levelDB, IntPtr eventContext);
+    unsafe int SetChannelVolumeLevel(uint channel, float levelDB, Guid* eventContext);
 
     [PreserveSig]
     int GetChannelVolumeLevel(uint channel, out float levelDB);
 
     [PreserveSig]
-    int SetChannelVolumeLevelScalar(uint channel, float level, IntPtr eventContext);
+    unsafe int SetChannelVolumeLevelScalar(uint channel, float level, Guid* eventContext);
 
     [PreserveSig]
     int GetChannelVolumeLevelScalar(uint channel, out float level);
 
+    [PreserveSig]
+    unsafe int SetMute(int mute, Guid* eventContext);
 
     [PreserveSig]
     int GetMute(out int mute);
@@ -160,19 +162,122 @@ internal partial interface IAudioEndpointVolume
     int GetVolumeStepInfo(out uint step, out uint stepCount);
 
     [PreserveSig]
-    int SetMute(int mute, IntPtr eventContext);
+    unsafe int VolumeStepUp(Guid* eventContext);
 
     [PreserveSig]
-    int VolumeStepUp(IntPtr eventContext);
-
-    [PreserveSig]
-    int VolumeStepDown(IntPtr eventContext);
+    unsafe int VolumeStepDown(Guid* eventContext);
 
     [PreserveSig]
     int QueryHardwareSupport(out uint hardwareSupportMask);
 
     [PreserveSig]
     int GetVolumeRange(out float volumeMinDB, out float volumeMaxDB, out float volumeStepDB);
+}
+
+// ── Per-session audio interfaces ───────────────────────────
+
+[GeneratedComInterface]
+[Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F")]
+internal partial interface IAudioSessionManager2
+{
+    [PreserveSig]
+    int GetAudioSessionControl(IntPtr audioSessionGuid, uint streamFlags, out IntPtr sessionControl);
+
+    [PreserveSig]
+    int GetSimpleAudioVolume(IntPtr audioSessionGuid, uint streamFlags, out IntPtr audioVolume);
+
+    [PreserveSig]
+    int GetSessionEnumerator(out IntPtr sessionEnum);
+
+    [PreserveSig]
+    int RegisterSessionNotification(IntPtr sessionNotification);
+
+    [PreserveSig]
+    int UnregisterSessionNotification(IntPtr sessionNotification);
+}
+
+[GeneratedComInterface]
+[Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8")]
+internal partial interface IAudioSessionEnumerator
+{
+    [PreserveSig]
+    int GetCount(out int sessionCount);
+
+    [PreserveSig]
+    int GetSession(int sessionCount, out IntPtr session);
+}
+
+[GeneratedComInterface]
+[Guid("BFB7FF88-7239-4FC9-8FA2-07C950BE9C6D")]
+internal partial interface IAudioSessionControl2
+{
+    [PreserveSig]
+    int GetState(out int state);
+
+    [PreserveSig]
+    int GetDisplayName(out IntPtr displayName);
+
+    [PreserveSig]
+    int SetDisplayName(IntPtr displayName, IntPtr eventContext);
+
+    [PreserveSig]
+    int GetIconPath(out IntPtr iconPath);
+
+    [PreserveSig]
+    int SetIconPath(IntPtr iconPath, IntPtr eventContext);
+
+    [PreserveSig]
+    int GetGroupingParam(out Guid groupingParam);
+
+    [PreserveSig]
+    int SetGroupingParam(Guid groupingId, IntPtr eventContext);
+
+    [PreserveSig]
+    int AudioVolumeNotificationRegistered(IntPtr notificationObject);
+
+    [PreserveSig]
+    int UnregisterAudioVolumeNotification(IntPtr notificationObject);
+
+    // IAudioSessionControl2 specific
+    [PreserveSig]
+    int GetSessionIdentifier(out IntPtr sessionIdentifier);
+
+    [PreserveSig]
+    int GetSessionInstanceIdentifier(out IntPtr sessionInstanceIdentifier);
+
+    [PreserveSig]
+    int GetProcessId(out uint processId);
+
+    [PreserveSig]
+    int IsSystemSoundsSession();
+
+    [PreserveSig]
+    int SetDuckingPreference([MarshalAs(UnmanagedType.Bool)] bool optOut);
+}
+
+[GeneratedComInterface]
+[Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8")]
+internal partial interface ISimpleAudioVolume
+{
+    [PreserveSig]
+    unsafe int SetMasterVolume(float level, Guid* eventContext);
+
+    [PreserveSig]
+    int GetMasterVolume(out float level);
+
+    [PreserveSig]
+    unsafe int SetMute(int mute, Guid* eventContext);
+
+    [PreserveSig]
+    int GetMute(out int mute);
+}
+
+[GeneratedComInterface]
+[Guid("2BE0978D-8A09-4704-89A1-3D81BF418F0C")]
+internal partial interface IAudioSessionNotification
+{
+    [PreserveSig]
+    int OnSessionCreated(IntPtr newSession);
 }
 
 // ── Device change notification callback ────────────────────

@@ -26,6 +26,7 @@ internal sealed class TrayApp : IDisposable
     private HICON _icon;
     private bool _trayIconAdded;
     private bool _initFailed;
+    private bool _sessionNotificationsRegistered;
 
     public TrayApp()
     {
@@ -79,6 +80,7 @@ internal sealed class TrayApp : IDisposable
         }
         _mouseHookProc = null;
         AudioManager.UnregisterDeviceNotifications();
+        AudioSessionManager.UnregisterSessionNotifications();
 
         if (!_icon.IsNull)
         {
@@ -163,6 +165,11 @@ internal sealed class TrayApp : IDisposable
 
         if (!PInvoke.Shell_NotifyIcon(NOTIFY_ICON_MESSAGE.NIM_ADD, in data))
             Marshal.ThrowExceptionForHR(Marshal.GetHRForLastWin32Error());
+
+        // NOTIFYICON_VERSION_4 is required for reliable middle/right mouse
+        // message delivery on modern Windows.
+        data.Anonymous.uVersion = 4;
+        _ = PInvoke.Shell_NotifyIcon(NOTIFY_ICON_MESSAGE.NIM_SETVERSION, in data);
     }
 
     private void RemoveTrayIcon()
@@ -310,78 +317,123 @@ internal sealed class TrayApp : IDisposable
         _ = PInvoke.Shell_NotifyIcon(NOTIFY_ICON_MESSAGE.NIM_MODIFY, in data);
     }
 
-    private unsafe void ShowContextMenu()
+    private unsafe void ShowLeftMenu()
     {
-        while (true)
+        if (!_sessionNotificationsRegistered)
         {
-            var hMenu = PInvoke.CreatePopupMenu();
-            if (hMenu.IsNull)
-                return;
-
-            var refreshRequested = false;
             try
             {
-                var devices = AudioManager.EnumerateRenderEndpoints();
-                var currentId = AudioManager.GetCurrentDefaultId();
-                var items = TrayMenuBuilder.Build(devices, currentId);
-                var deviceMap = BuildDeviceMap(devices);
-
-                foreach (var item in items)
-                {
-                    if (item.Separator)
-                    {
-                        _ = PInvoke.AppendMenu(hMenu, MENU_ITEM_FLAGS.MF_SEPARATOR, 0, null);
-                    }
-                    else
-                    {
-                        var flags = MENU_ITEM_FLAGS.MF_STRING;
-                        if (!item.Enabled)
-                            flags |= MENU_ITEM_FLAGS.MF_GRAYED;
-                        if (item.Checked)
-                            flags |= MENU_ITEM_FLAGS.MF_CHECKED;
-
-                        fixed (char* pText = item.Text)
-                        {
-                            _ = PInvoke.AppendMenu(hMenu, flags, (nuint)(uint)item.Id, pText);
-                        }
-                    }
-                }
-
-                var pt = default(Point);
-                _ = PInvoke.GetCursorPos(out pt);
-                _ = PInvoke.SetForegroundWindow(_hwnd);
-
-                var cmd = PInvoke.TrackPopupMenu(
-                    hMenu,
-                    TRACK_POPUP_MENU_FLAGS.TPM_LEFTALIGN | TRACK_POPUP_MENU_FLAGS.TPM_RIGHTBUTTON | TRACK_POPUP_MENU_FLAGS.TPM_RETURNCMD | TRACK_POPUP_MENU_FLAGS.TPM_NONOTIFY,
-                    pt.X,
-                    pt.Y,
-                    0,
-                    _hwnd,
-                    (RECT*)null);
-
-                if (cmd.Value != 0)
-                    refreshRequested = ExecuteMenuCommand(cmd.Value, deviceMap);
+                AudioSessionManager.RegisterSessionNotifications();
+                _sessionNotificationsRegistered = true;
             }
-            finally
-            {
-                PInvoke.DestroyMenu(hMenu);
-            }
+            catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] RegisterSessionNotifications failed: {ex.Message}"); }
+        }
 
-            if (!refreshRequested)
-                return;
+        var devices = AudioManager.EnumerateRenderEndpoints();
+        var currentId = AudioManager.GetCurrentDefaultId();
+        var sessions = AudioSessionManager.EnumerateSessions();
+        var items = TrayMenuBuilder.BuildLeftMenu(devices, currentId, sessions);
+        ShowContextMenu(items, devices, sessions);
+    }
+
+    private unsafe void ShowRightMenu()
+    {
+        var items = TrayMenuBuilder.BuildRightMenu();
+        ShowContextMenu(items, [], []);
+    }
+
+    private unsafe void ShowContextMenu(List<TrayMenuItem> items, IReadOnlyList<AudioDevice> devices, IReadOnlyList<AudioSessionInfo> sessions)
+    {
+        var hMenu = PInvoke.CreatePopupMenu();
+        if (hMenu.IsNull)
+            return;
+
+        var deviceMap = new Dictionary<int, string>();
+        var sessionMap = new Dictionary<int, AudioSessionInfo>();
+
+        try
+        {
+            AppendMenuItems(hMenu, items, devices, sessions, deviceMap, sessionMap);
+
+            var pt = default(Point);
+            _ = PInvoke.GetCursorPos(out pt);
+            _ = PInvoke.SetForegroundWindow(_hwnd);
+
+            var cmd = PInvoke.TrackPopupMenu(
+                hMenu,
+                TRACK_POPUP_MENU_FLAGS.TPM_LEFTALIGN | TRACK_POPUP_MENU_FLAGS.TPM_RIGHTBUTTON | TRACK_POPUP_MENU_FLAGS.TPM_RETURNCMD | TRACK_POPUP_MENU_FLAGS.TPM_NONOTIFY,
+                pt.X,
+                pt.Y,
+                0,
+                _hwnd,
+                (RECT*)null);
+
+            if (cmd.Value != 0)
+                ExecuteMenuCommand(cmd.Value, deviceMap, sessionMap);
+        }
+        finally
+        {
+            PInvoke.DestroyMenu(hMenu);
         }
     }
 
-    private static Dictionary<int, string> BuildDeviceMap(IReadOnlyList<AudioDevice> devices)
+    private static unsafe void AppendMenuItems(HMENU hMenu, List<TrayMenuItem> items, IReadOnlyList<AudioDevice> devices, IReadOnlyList<AudioSessionInfo> sessions, Dictionary<int, string> deviceMap, Dictionary<int, AudioSessionInfo> sessionMap)
     {
-        var map = new Dictionary<int, string>();
-        for (var i = 0; i < devices.Count; i++)
-            map[TrayMenuBuilder.FirstDeviceId + i] = devices[i].Id;
-        return map;
+        foreach (var item in items)
+        {
+            if (item.Separator)
+            {
+                _ = PInvoke.AppendMenu(hMenu, MENU_ITEM_FLAGS.MF_SEPARATOR, 0, null);
+                continue;
+            }
+
+            if (item.Children is { Count: > 0 })
+            {
+                var hSubMenu = PInvoke.CreatePopupMenu();
+                if (!hSubMenu.IsNull)
+                {
+                    AppendMenuItems(hSubMenu, item.Children, devices, sessions, deviceMap, sessionMap);
+                    fixed (char* pText = item.Text)
+                    {
+                        _ = PInvoke.AppendMenu(hMenu, MENU_ITEM_FLAGS.MF_STRING | MENU_ITEM_FLAGS.MF_POPUP, (nuint)hSubMenu.Value, pText);
+                    }
+                }
+                continue;
+            }
+
+            var flags = MENU_ITEM_FLAGS.MF_STRING;
+            if (!item.Enabled)
+                flags |= MENU_ITEM_FLAGS.MF_GRAYED;
+            if (item.Checked)
+                flags |= MENU_ITEM_FLAGS.MF_CHECKED;
+
+            // Build lookup maps for commands that need runtime data.
+            if (item.Id >= TrayMenuBuilder.FirstDeviceId && item.Id < TrayMenuBuilder.FirstSessionMuteId)
+            {
+                var idx = item.Id - TrayMenuBuilder.FirstDeviceId;
+                if (idx >= 0 && idx < devices.Count)
+                    deviceMap[item.Id] = devices[idx].Id;
+            }
+            else if (item.Id >= TrayMenuBuilder.FirstSessionMuteId)
+            {
+                var idx = MapSessionIndex(item.Id);
+                if (idx >= 0 && idx < sessions.Count)
+                    sessionMap[item.Id] = sessions[idx];
+            }
+
+            fixed (char* pText = item.Text)
+            {
+                _ = PInvoke.AppendMenu(hMenu, flags, (nuint)(uint)item.Id, pText);
+            }
+        }
     }
 
-    private bool ExecuteMenuCommand(int cmd, Dictionary<int, string> deviceMap)
+    private static int MapSessionIndex(int id)
+    {
+        return id - TrayMenuBuilder.FirstSessionMuteId;
+    }
+
+    private void ExecuteMenuCommand(int cmd, Dictionary<int, string> deviceMap, Dictionary<int, AudioSessionInfo> sessionMap)
     {
         if (deviceMap.TryGetValue(cmd, out var deviceId))
         {
@@ -395,14 +447,21 @@ internal sealed class TrayApp : IDisposable
                     : "Switched to: {0}", deviceName));
             }
             catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] SetDefault: {ex.Message}"); }
-            return false;
+            return;
+        }
+
+        if (sessionMap.TryGetValue(cmd, out var session))
+        {
+            try
+            {
+                AudioSessionManager.SetSessionMute(session.SessionId, !session.IsMuted);
+            }
+            catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] Session command: {ex.Message}"); }
+            return;
         }
 
         switch ((TrayMenuCommand)cmd)
         {
-            case TrayMenuCommand.Refresh:
-                AudioManager.InvalidateDeviceCache();
-                return true;
             case TrayMenuCommand.ToggleAutostart:
             {
                 var target = !StartupManager.IsEnabled();
@@ -414,6 +473,29 @@ internal sealed class TrayApp : IDisposable
                     : Locale.T("设置开机自启失败", "Failed to set autostart"));
                 break;
             }
+            case TrayMenuCommand.ToggleGlobalMute:
+            {
+                try
+                {
+                    AudioManager.ToggleMute();
+                    var isMuted = AudioManager.GetMute();
+                    var volume = AudioManager.GetVolumeScalar();
+                    var pct = (int)Math.Round((volume ?? 0) * 100);
+                    UpdateTooltip(BuildVolumeTooltip(pct));
+                    ShowBalloonTip(isMuted == true
+                        ? Locale.T("已全局静音", "Global mute: ON")
+                        : Locale.T("已取消全局静音", "Global mute: OFF"));
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[AudioSwitcher] ToggleGlobalMute: {ex.Message}");
+                    ShowBalloonTip(Locale.T("全局静音切换失败", "Failed to toggle global mute"));
+                }
+                break;
+            }
+            case TrayMenuCommand.OpenVolumeMixer:
+                OpenVolumeMixer();
+                break;
             case TrayMenuCommand.About:
                 OpenUrl("https://github.com/Wildfire2282/audio-switcher");
                 break;
@@ -421,51 +503,40 @@ internal sealed class TrayApp : IDisposable
                 PInvoke.PostQuitMessage(0);
                 break;
         }
-
-        return false;
     }
     private void OnTrayMessage(uint message)
     {
         try
         {
+            LogTrayMessage(message);
             switch (message)
             {
                 case PInvoke.WM_LBUTTONUP:
-                    ToggleMute();
+                    ShowLeftMenu();
                     break;
                 case PInvoke.WM_RBUTTONUP:
                 case PInvoke.WM_CONTEXTMENU:
-                    ShowContextMenu();
+                    ShowRightMenu();
                     break;
             }
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"[AudioSwitcher] Tray message 0x{message:X8} failed: {ex.Message}");
+            LogTrayMessage(message, ex.Message);
         }
     }
 
-    private void ToggleMute()
+    private static void LogTrayMessage(uint message, string? note = null)
     {
         try
         {
-            AudioManager.ToggleMute();
-            var isMuted = AudioManager.GetMute();
-            var volume = AudioManager.GetVolumeScalar();
-            var pct = (int)Math.Round((volume ?? 0) * 100);
-
-            var label = isMuted == true
-                ? Locale.T("已静音", "Muted")
-                : $"{pct}%";
-            UpdateTooltip(BuildVolumeTooltip(pct));
-            ShowBalloonTip(label);
+            var path = Path.Combine(Path.GetTempPath(), "audio-switcher-tray.log");
+            var line = $"{DateTime.Now:HH:mm:ss.fff} msg=0x{message:X4} ({message}) {note}";
+            File.AppendAllText(path, line + Environment.NewLine);
         }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"[AudioSwitcher] ToggleMute: {ex.Message}");
-        }
+        catch { }
     }
-
 
     private bool IsCursorOverIcon(Point cursorScreen)
     {
@@ -488,11 +559,9 @@ internal sealed class TrayApp : IDisposable
         switch (msg)
         {
             case TrayMessageId:
-                OnTrayMessage((uint)lParam.Value);
-                return (LRESULT)0;
-
-            case PInvoke.WM_COMMAND:
-                // Handled synchronously by TrackPopupMenu with TPM_RETURNCMD.
+                // NOTIFYICON_VERSION_4 packs the icon ID in HIWORD and the
+                // actual mouse message in LOWORD of lParam.
+                OnTrayMessage((uint)(lParam.Value & 0xFFFF));
                 return (LRESULT)0;
 
             case PInvoke.WM_DESTROY:
@@ -513,40 +582,18 @@ internal sealed class TrayApp : IDisposable
 
     private static HICON LoadIcon()
     {
-        const string resourceName = "AudioSwitcher.assets.icon.png";
+        const string resourceName = "AudioSwitcher.assets.icon.ico";
         using var stream = typeof(Program).Assembly.GetManifestResourceStream(resourceName);
         if (stream == null)
             return CreateFallbackIcon();
 
-        using var bitmap = new Bitmap(stream);
-        using var src = EnsureArgb(bitmap);
-
-        // GetHicon() does not preserve alpha channel — round-trip through
-        // Icon.Save to produce a proper .ico with correct transparency.
-        var rawHicon = src.GetHicon();
-        using var tempIcon = System.Drawing.Icon.FromHandle(rawHicon);
-        using var ms = new MemoryStream();
-        tempIcon.Save(ms);
-        ms.Position = 0;
-
-        PInvoke.DestroyIcon(new HICON(rawHicon));
-
-        var finalIcon = new System.Drawing.Icon(ms);
-        var handle = finalIcon.Handle;
-        GC.SuppressFinalize(finalIcon);
+        // Load the 16x16 entry directly — avoids Bitmap.GetHicon() alpha
+        // issues and the MemoryStream round-trip used for the PNG resource.
+        using var icon = new System.Drawing.Icon(stream, 16, 16);
+        var handle = icon.Handle;
+        GC.SuppressFinalize(icon);
 
         return new HICON(handle);
-    }
-
-    private static Bitmap EnsureArgb(Bitmap src)
-    {
-        var converted = new Bitmap(src.Width, src.Height, PixelFormat.Format32bppArgb);
-        using (var g = Graphics.FromImage(converted))
-        {
-            g.Clear(Color.Transparent);
-            g.DrawImage(src, 0, 0, src.Width, src.Height);
-        }
-        return converted;
     }
 
     private static HICON CreateFallbackIcon()
@@ -579,5 +626,15 @@ internal sealed class TrayApp : IDisposable
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
         }
         catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] OpenUrl: {ex.Message}"); }
+    }
+
+    private static void OpenVolumeMixer()
+    {
+        try
+        {
+            var path = System.IO.Path.Combine(Environment.SystemDirectory, "sndvol.exe");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] OpenVolumeMixer: {ex.Message}"); }
     }
 }

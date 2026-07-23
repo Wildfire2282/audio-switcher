@@ -109,11 +109,6 @@ internal static class AudioManager
             if (_cachedDefaultId != null && DateTime.UtcNow - _defaultIdCacheTime < CacheTtl)
                 return _cachedDefaultId;
         }
-        return RefreshDefaultId();
-    }
-
-    private static string? RefreshDefaultId()
-    {
         return GetDefaultId(ERole.eConsole);
     }
 
@@ -179,6 +174,7 @@ internal static class AudioManager
             {
                 Release(policy);
                 InvalidateDeviceCache();
+                AudioSessionManager.OnDefaultDeviceChanged();
             }
         }
         finally { Marshal.FreeCoTaskMem(ptr); }
@@ -274,7 +270,8 @@ internal static class AudioManager
         {
             var hr = volume.GetMasterVolumeLevelScalar(out var current); HResult.ThrowIfFailed(hr);
             var newLevel = Math.Clamp(current + notches * VolumeStep, 0.0f, 1.0f);
-            hr = volume.SetMasterVolumeLevelScalar(newLevel, IntPtr.Zero); HResult.ThrowIfFailed(hr);
+            unsafe { hr = volume.SetMasterVolumeLevelScalar(newLevel, null); }
+            HResult.ThrowIfFailed(hr);
         }
         finally { Release(volume); }
     }
@@ -294,10 +291,15 @@ internal static class AudioManager
     public static bool? GetMute()
     {
         var volume = GetEndpointVolume();
-        if (volume == null) return null;
+        if (volume == null)
+        {
+            Log("GetMute: GetEndpointVolume returned null");
+            return null;
+        }
         try
         {
             var hr = volume.GetMute(out var mute);
+            Log($"GetMute: hr=0x{hr:X8} mute={mute}");
             return HResult.Succeeded(hr) ? mute != 0 : null;
         }
         finally { Release(volume); }
@@ -306,16 +308,34 @@ internal static class AudioManager
     public static void ToggleMute()
     {
         var volume = GetEndpointVolume();
-        if (volume == null) return;
+        if (volume == null)
+        {
+            Log("ToggleMute: GetEndpointVolume returned null");
+            return;
+        }
         try
         {
-            var hr = volume.GetMute(out var mute); HResult.ThrowIfFailed(hr);
-            hr = volume.SetMute(mute != 0 ? 0 : 1, IntPtr.Zero); HResult.ThrowIfFailed(hr);
+            var hr = volume.GetMute(out var mute);
+            Log($"ToggleMute: GetMute hr=0x{hr:X8} mute={mute}");
+            HResult.ThrowIfFailed(hr);
+            unsafe { hr = volume.SetMute(mute != 0 ? 0 : 1, null); }
+            Log($"ToggleMute: SetMute hr=0x{hr:X8}");
+            HResult.ThrowIfFailed(hr);
         }
         finally { Release(volume); }
     }
 
     // ── helpers ────────────────────────────────────────────────
+
+    private static void Log(string message)
+    {
+        try
+        {
+            var path = Path.Combine(Path.GetTempPath(), "audio-switcher-tray.log");
+            File.AppendAllText(path, $"{DateTime.Now:HH:mm:ss.fff} [AM] {message}" + Environment.NewLine);
+        }
+        catch { }
+    }
 
     private static IAudioEndpointVolume? GetEndpointVolume()
     {
@@ -325,12 +345,14 @@ internal static class AudioManager
             try
             {
                 var hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eConsole, out var devPtr);
+                Log($"GetEndpointVolume: GetDefaultAudioEndpoint hr=0x{hr:X8}");
                 if (!HResult.Succeeded(hr)) return null;
                 var device = Cast<IMMDevice>(devPtr);
                 try
                 {
                     var iid = typeof(IAudioEndpointVolume).GUID;
                     hr = device.Activate(ref iid, Clsctx.CLSCTX_ALL, IntPtr.Zero, out var volPtr);
+                    Log($"GetEndpointVolume: Activate hr=0x{hr:X8} volPtr={volPtr}");
                     return HResult.Succeeded(hr) && volPtr != IntPtr.Zero
                         ? Cast<IAudioEndpointVolume>(volPtr)
                         : null;
@@ -339,7 +361,7 @@ internal static class AudioManager
             }
             finally { Release(enumerator); }
         }
-        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] GetEndpointVolume: {ex.Message}"); return null; }
+        catch (Exception ex) { Log($"GetEndpointVolume EXCEPTION: {ex.Message}"); return null; }
     }
 
     private static IMMDeviceEnumerator CreateEnumerator()

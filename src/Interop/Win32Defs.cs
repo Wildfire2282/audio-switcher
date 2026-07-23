@@ -85,7 +85,6 @@ internal static class PropertyKeys
 internal static class HResult
 {
     public const int S_OK = 0;
-    public const int ERROR_NOT_FOUND = unchecked((int)0x80070490);
 
     public static bool Succeeded(int hr) => hr >= 0;
 
