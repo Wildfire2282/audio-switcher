@@ -1,12 +1,5 @@
 # Audio Switcher
 
-<a href="https://github.com/Wildfire2282/audio-switcher/releases">
-  <img src="https://img.shields.io/github/v/release/Wildfire2282/audio-switcher?style=flat-square&color=blue" alt="Release">
-</a>
-<a href="https://github.com/Wildfire2282/audio-switcher/blob/main/LICENSE">
-  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
-</a>
-
 Windows 系统托盘音频输出设备快速切换与音量管理工具。
 
 ![Tray icon](assets/icon.png)
