@@ -13,6 +13,8 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- Icon -->
+    <ApplicationIcon>assets\icon.ico</ApplicationIcon>
     <NoWarn>$(NoWarn);IL2050;PInvoke004</NoWarn>
 
     <AssemblyName>audio-switcher</AssemblyName>

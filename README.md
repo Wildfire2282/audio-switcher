@@ -2,19 +2,27 @@
 
 **Language / 语言**：`English` | [中文](#中文)
 
-<details open>
-<summary><b>English</b></summary>
+<a href="https://github.com/Wildfire2282/audio-switcher/releases">
+  <img src="https://img.shields.io/github/v/release/Wildfire2282/audio-switcher?style=flat-square&color=blue" alt="Release">
+</a>
+<a href="https://github.com/Wildfire2282/audio-switcher/blob/main/LICENSE">
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
+</a>
 
 Quick audio output device switcher for the Windows system tray.
 
 Right-click the tray icon to switch the default playback device directly — no need to open Sound settings.
+
+![Tray icon](assets/icon.png)
+
+## Features
 
 - **Device switching** — enumerates all active render endpoints, one click sets default
 - **Three-role switch** — sets console / multimedia / communications ERoles simultaneously
 - **Wheel volume** — scroll over the tray icon to adjust volume, instant tooltip shows device name + percentage
 - **Auto-start** — toggle Windows startup from the menu
 - **About** — menu link to the GitHub repo
-- **Custom tray icon** — waveform icon embedded as resource, same across light/dark themes
+- **Custom icon** — waveform icon embedded as native Win32 resource, same across light/dark themes
 - **Single instance** — global mutex ensures only one instance runs
 - **AOT single-file** — published as a single native executable, no runtime required
 
@@ -47,7 +55,7 @@ dotnet build
 dotnet publish -c Release -r win-x64 --self-contained true
 ```
 
-Output: `bin/Release/net10.0-windows/win-x64/publish/audio-switcher.exe` (~2.7 MB).
+Output: `bin/Release/net10.0-windows/win-x64/publish/audio-switcher.exe` (~2.8 MB).
 
 ### Prerequisites
 
@@ -90,6 +98,8 @@ Switching covers all three ERoles:
 
 A single waveform icon (`assets/icon.png`) is embedded as a resource. It is converted to a proper `.ico` at runtime via `Icon.Save` to preserve the alpha channel, ensuring sharp rendering on any theme.
 
+The same icon is also embedded as a native Win32 resource in the executable via `ApplicationIcon`, so it appears consistently in the taskbar, Alt+Tab, and File Explorer.
+
 ### Auto-start
 
 Managed via `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, per-user only.
@@ -106,6 +116,10 @@ A `WH_MOUSE_LL` low-level mouse hook captures global scroll events. Hover detect
 
 All Core Audio COM interfaces use `[GeneratedComInterface]` (source-generated COM) instead of `[ComImport]` (runtime-based, fails under AOT). RCW creation goes through `StrategyBasedComWrappers`, and all string/boolean marshalling is done manually via `IntPtr` to avoid AOT-unsupported `MarshalAs` attributes.
 
+### Thread safety
+
+The device enumeration cache and notification client lifecycle are protected by locks (`_cacheLock` and `_disposeLock`) to prevent race conditions between the UI thread and the COM callback thread.
+
 ### Localization
 
 Detects `CultureInfo.InstalledUICulture` at startup. Shows Chinese when the system language is Chinese; English for everything else.
@@ -121,23 +135,26 @@ dotnet run --project tests/Smoke/Smoke.csproj -c Release
 
 MIT
 
-</details>
-
-<details>
-<summary><b>中文</b></summary>
+---
 
 <a name="中文"></a>
+<details>
+<summary><b>中文</b></summary>
 
 Windows 系统托盘音频输出设备快速切换工具。
 
 右键点击托盘图标，在菜单中直接切换默认播放设备，无需进入系统声音设置。
+
+![Tray icon](assets/icon.png)
+
+## 功能特性
 
 - **设备切换** — 枚举所有活动的音频渲染端点，点击即设为默认
 - **三角色统一切换** — 同时设置 console / multimedia / communications 三个 ERole
 - **滚轮调音** — 鼠标悬停托盘图标滚动滚轮调节音量，tooltip 即时显示设备名+百分比
 - **开机自启** — 菜单中一键启用/禁用 Windows 自动启动
 - **关于** — 菜单链接到 GitHub 仓库
-- **自定义图标** — 波形图标作为嵌入资源，浅色/深色主题通用
+- **自定义图标** — 波形图标作为原生 Win32 资源嵌入，浅色/深色主题通用
 - **单实例** — 全局 Mutex 确保只有一个实例运行
 - **AOT 单文件** — 发布为单个原生可执行文件，无需运行时
 
@@ -170,7 +187,7 @@ dotnet build
 dotnet publish -c Release -r win-x64 --self-contained true
 ```
 
-输出：`bin/Release/net10.0-windows/win-x64/publish/audio-switcher.exe`（约 2.7 MB）。
+输出：`bin/Release/net10.0-windows/win-x64/publish/audio-switcher.exe`（约 2.8 MB）。
 
 ### 前提
 
@@ -213,6 +230,8 @@ tests/
 
 单个波形图标（`assets/icon.png`）作为嵌入资源。运行时通过 `Icon.Save` 转换为标准 `.ico` 格式以保留 Alpha 通道，在任何主题下都能清晰显示。
 
+同一图标也通过 `ApplicationIcon` 作为原生 Win32 资源嵌入到可执行文件中，因此在任务栏、Alt+Tab 和文件资源管理器中显示一致。
+
 ### 自启
 
 通过 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 实现，仅影响当前用户。
@@ -228,6 +247,10 @@ tests/
 ### AOT COM 互操作
 
 所有 Core Audio COM 接口使用 `[GeneratedComInterface]`（源生成 COM）而非 `[ComImport]`（运行时模式，AOT 下失败）。RCW 创建通过 `StrategyBasedComWrappers`，字符串/布尔编组手动通过 `IntPtr` 完成，以避免 AOT 不支持的 `MarshalAs` 属性。
+
+### 线程安全
+
+设备枚举缓存和通知客户端生命周期受锁保护（`_cacheLock` 和 `_disposeLock`），防止 UI 线程和 COM 回调线程之间的竞争条件。
 
 ### 本地化
 

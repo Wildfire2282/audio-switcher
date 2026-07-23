@@ -12,7 +12,7 @@ internal sealed record TrayMenuItem(string Text, int Id, bool Checked = false, b
 
 internal static class TrayMenuBuilder
 {
-    private const int FirstDeviceId = 1000;
+    public const int FirstDeviceId = 1000;
 
     public static List<TrayMenuItem> Build(IReadOnlyList<AudioDevice> devices, string? currentId)
     {

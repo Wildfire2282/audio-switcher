@@ -12,16 +12,30 @@ internal static class AudioManager
     private const float VolumeStep = 0.01f;
 
     // ── Device enumeration cache ────────────────────────────────
+    // All cache fields are accessed from the UI thread and the COM
+    // notification callback thread — protect with a lock.
+    private static readonly object _cacheLock = new();
     private static List<AudioDevice>? _cachedDevices;
     private static DateTime _devicesCacheTime;
     private static string? _cachedDefaultId;
     private static DateTime _defaultIdCacheTime;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMilliseconds(800);
 
+    // ── Notification client lifetime ─────────────────────────────
+    // _disposeLock guards against the callback firing after Unregister
+    // has begun (COM may still deliver an in-flight notification).
+    private static readonly object _disposeLock = new();
+    private static IMMDeviceEnumerator? _enumerator;
+    private static DeviceNotificationClient? _notificationClient;
+    private static bool _disposed;
+
     public static void InvalidateDeviceCache()
     {
-        _cachedDevices = null;
-        _cachedDefaultId = null;
+        lock (_cacheLock)
+        {
+            _cachedDevices = null;
+            _cachedDefaultId = null;
+        }
     }
 
     public static List<AudioDevice> EnumerateRenderEndpoints()
@@ -69,23 +83,32 @@ internal static class AudioManager
 
         if (devices.Count > 0)
         {
-            _cachedDevices = devices;
-            _devicesCacheTime = DateTime.UtcNow;
+            lock (_cacheLock)
+            {
+                _cachedDevices = devices;
+                _devicesCacheTime = DateTime.UtcNow;
+            }
         }
         return devices;
     }
 
     public static List<AudioDevice> EnumerateRenderEndpointsCached()
     {
-        if (_cachedDevices != null && DateTime.UtcNow - _devicesCacheTime < CacheTtl)
-            return _cachedDevices;
+        lock (_cacheLock)
+        {
+            if (_cachedDevices != null && DateTime.UtcNow - _devicesCacheTime < CacheTtl)
+                return _cachedDevices;
+        }
         return EnumerateRenderEndpoints();
     }
 
     public static string? GetCurrentDefaultId()
     {
-        if (_cachedDefaultId != null && DateTime.UtcNow - _defaultIdCacheTime < CacheTtl)
-            return _cachedDefaultId;
+        lock (_cacheLock)
+        {
+            if (_cachedDefaultId != null && DateTime.UtcNow - _defaultIdCacheTime < CacheTtl)
+                return _cachedDefaultId;
+        }
         return RefreshDefaultId();
     }
 
@@ -109,8 +132,11 @@ internal static class AudioManager
                     var id = GetDeviceId(device);
                     if (role == ERole.eConsole && !string.IsNullOrEmpty(id))
                     {
-                        _cachedDefaultId = id;
-                        _defaultIdCacheTime = DateTime.UtcNow;
+                        lock (_cacheLock)
+                        {
+                            _cachedDefaultId = id;
+                            _defaultIdCacheTime = DateTime.UtcNow;
+                        }
                     }
                     return id;
                 }
@@ -173,41 +199,54 @@ internal static class AudioManager
 
     public static void RegisterDeviceNotifications(DeviceChangeCallback callback)
     {
-        try
+        lock (_disposeLock)
         {
+            if (_disposed) return;
             if (_notificationClient != null) return;
 
-            var notificationClient = new DeviceNotificationClient(callback);
-            var enumerator = CreateEnumerator();
-            var comPtr = ComHelpers.Wrappers.GetOrCreateComInterfaceForObject(
-                notificationClient, CreateComInterfaceFlags.None);
             try
             {
-                var hr = enumerator.RegisterEndpointNotificationCallback(comPtr);
-                HResult.ThrowIfFailed(hr);
-                _notificationClient = notificationClient;
-                _enumerator = enumerator;
+                var notificationClient = new DeviceNotificationClient(callback);
+                var enumerator = CreateEnumerator();
+                var comPtr = ComHelpers.Wrappers.GetOrCreateComInterfaceForObject(
+                    notificationClient, CreateComInterfaceFlags.None);
+                try
+                {
+                    var hr = enumerator.RegisterEndpointNotificationCallback(comPtr);
+                    HResult.ThrowIfFailed(hr);
+                    _notificationClient = notificationClient;
+                    _enumerator = enumerator;
+                }
+                finally
+                {
+                    _ = Marshal.Release(comPtr);
+                    if (_enumerator == null)
+                        Release(enumerator);
+                }
             }
-            finally
-            {
-                _ = Marshal.Release(comPtr);
-                if (_enumerator == null)
-                    Release(enumerator);
-            }
+            catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] RegisterDeviceNotifications: {ex.Message}"); }
         }
-        catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] RegisterDeviceNotifications: {ex.Message}"); }
     }
 
     public static void UnregisterDeviceNotifications()
     {
-        if (_enumerator == null || _notificationClient == null) return;
+        lock (_disposeLock)
+        {
+            if (_disposed) return;
+            if (_enumerator == null || _notificationClient == null) return;
+
+            _disposed = true;
+        }
+
         try
         {
+            // Re-acquire the COM pointer outside the lock to avoid
+            // re-entering the lock during marshalling.
             var comPtr = ComHelpers.Wrappers.GetOrCreateComInterfaceForObject(
-                _notificationClient, CreateComInterfaceFlags.None);
+                _notificationClient!, CreateComInterfaceFlags.None);
             try
             {
-                _ = _enumerator.UnregisterEndpointNotificationCallback(comPtr);
+                _ = _enumerator!.UnregisterEndpointNotificationCallback(comPtr);
             }
             finally
             {
@@ -218,8 +257,11 @@ internal static class AudioManager
         finally
         {
             Release(_enumerator);
-            _enumerator = null;
-            _notificationClient = null;
+            lock (_disposeLock)
+            {
+                _enumerator = null;
+                _notificationClient = null;
+            }
         }
     }
 
@@ -274,10 +316,6 @@ internal static class AudioManager
     }
 
     // ── helpers ────────────────────────────────────────────────
-
-    private static IMMDeviceEnumerator? _enumerator;
-    private static DeviceNotificationClient? _notificationClient;
-
 
     private static IAudioEndpointVolume? GetEndpointVolume()
     {

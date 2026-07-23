@@ -16,7 +16,6 @@ internal sealed class TrayApp : IDisposable
     private const uint TrayMessageId = 0x8000;
     private const uint IconId = 1;
     private const int WheelDelta = 120;
-    private const int FirstDeviceId = 1000;
 
     private static TrayApp? _instance;
     private static HOOKPROC? _mouseHookProc;
@@ -52,7 +51,7 @@ internal sealed class TrayApp : IDisposable
         catch (Exception ex) { Debug.WriteLine($"[AudioSwitcher] RegisterDeviceHotplug failed: {ex.Message}"); }
     }
 
-    public bool IsInitialized() => !_initFailed && !_hwnd.IsNull;
+    public bool IsInitialized() => !_initFailed && _trayIconAdded && !_hwnd.IsNull;
 
     public void RunMessageLoop()
     {
@@ -280,17 +279,25 @@ internal sealed class TrayApp : IDisposable
 
     private static void CopyToTip(ref NOTIFYICONDATAW data, string text)
     {
+        // The struct is always freshly created (zero-initialized) before
+        // this method is called, so we only need to write the text and
+        // ensure it is properly null-terminated.
         var len = Math.Min(text.Length, 127);
         for (var i = 0; i < len; i++)
             data.szTip[i] = text[i];
+        data.szTip[len] = '\0';
     }
 
     private static void ShowBalloonTip(string text)
     {
+        var instance = _instance;
+        if (instance == null || instance._hwnd.IsNull)
+            return;
+
         var data = new NOTIFYICONDATAW
         {
             cbSize = (uint)Marshal.SizeOf<NOTIFYICONDATAW>(),
-            hWnd = _instance!._hwnd,
+            hWnd = instance._hwnd,
             uID = IconId,
             uFlags = NOTIFY_ICON_DATA_FLAGS.NIF_INFO | NOTIFY_ICON_DATA_FLAGS.NIF_SHOWTIP,
         };
@@ -370,7 +377,7 @@ internal sealed class TrayApp : IDisposable
     {
         var map = new Dictionary<int, string>();
         for (var i = 0; i < devices.Count; i++)
-            map[FirstDeviceId + i] = devices[i].Id;
+            map[TrayMenuBuilder.FirstDeviceId + i] = devices[i].Id;
         return map;
     }
 
@@ -423,7 +430,7 @@ internal sealed class TrayApp : IDisposable
         {
             switch (message)
             {
-                case 0x0202: // WM_LBUTTONUP
+                case PInvoke.WM_LBUTTONUP:
                     ToggleMute();
                     break;
                 case PInvoke.WM_RBUTTONUP:
