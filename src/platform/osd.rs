@@ -35,7 +35,7 @@ use crate::ui::osd::OsdContent;
 ///
 /// `app` owns the hide deadline (loop policy lives there) and this module owns
 /// only the window; the constant is shared so the two cannot drift apart.
-pub(crate) const VISIBLE_MS: u64 = 900;
+pub(crate) const VISIBLE_MS: u64 = 2000;
 
 /// Anchor rectangle in physical screen pixels: `(x, y, width, height)`.
 pub(crate) type Anchor = (i32, i32, i32, i32);
