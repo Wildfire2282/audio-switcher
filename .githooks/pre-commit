@@ -1,0 +1,8 @@
+#!/bin/sh
+# Block a commit that would not pass the gate.
+#
+# Runs the same four steps CI runs, and never the hardware integration step
+# (-GateOnly): a commit must not move the machine's real audio devices. Install
+# once per clone with `git config core.hooksPath .githooks` (see AGENTS.md).
+root=$(git rev-parse --show-toplevel)
+exec pwsh -NoProfile -File "$root/scripts/smoke.ps1" -GateOnly

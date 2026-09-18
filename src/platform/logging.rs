@@ -67,14 +67,12 @@ pub fn init() {
 fn log_file_path() -> std::path::PathBuf {
     let days = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() / 86_400)
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs() / 86_400);
     log_dir().join(format!("{}-{days}.log", crate::TOOL_ID))
 }
 
 fn log_dir() -> std::path::PathBuf {
     let base = std::env::var("LOCALAPPDATA")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::env::temp_dir());
+        .map_or_else(|_| std::env::temp_dir(), std::path::PathBuf::from);
     base.join(crate::TOOL_ID).join("logs")
 }

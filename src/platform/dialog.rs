@@ -7,7 +7,7 @@
 
 use super::autostart::AutostartError;
 #[cfg(windows)]
-use super::wide::wide_z;
+use super::utf16::wide_z;
 
 /// Show a warning box titled with the tool display name.
 ///

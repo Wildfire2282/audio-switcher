@@ -8,14 +8,21 @@
 use crate::audio::AudioDevice;
 use crate::config::Lang;
 use crate::ui::i18n::tr;
-use crate::ui::text::truncate_label;
+use crate::ui::label::truncate_label;
 
 /// Device-name budget in the overlay.
 ///
-/// Narrower than [`crate::ui::text::MAX_LABEL_CHARS`]: the card is a fixed
+/// Narrower than [`crate::ui::label::MAX_LABEL_CHARS`]: the card is a fixed
 /// width and draws one line, but the name is still truncated so a hostile
 /// endpoint name cannot widen it.
 pub(crate) const OSD_NAME_CHARS: usize = 40;
+
+/// Widest read-out a percentage can produce.
+///
+/// Reserved together with the mute word so the slider keeps one length whatever
+/// is on screen: the read-out counts digits as the volume moves (`5%` → `50%` →
+/// `100%`) and a bar sized to the text on screen visibly resizes with it.
+pub(crate) const WIDEST_PERCENT: &str = "100%";
 
 /// Text the overlay paints.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +32,12 @@ pub(crate) struct OsdContent {
     pub(crate) device: String,
     /// State text: `"72%"`, or the localized mute word.
     pub(crate) state: String,
+    /// The localized mute word, whether or not `state` is showing it.
+    ///
+    /// The card reserves a column sized for [`WIDEST_PERCENT`] or this word,
+    /// whichever measures wider — both are measurable only while the painter
+    /// holds the font, and neither may depend on the read-out on screen.
+    pub(crate) muted_label: String,
     /// Bar fill, `0..=100`.
     pub(crate) percent: u32,
     /// Whether the bar paints in the muted (grey) colour.
@@ -39,8 +52,9 @@ pub(crate) fn format(
     lang: Lang,
 ) -> OsdContent {
     let percent = volume.min(100);
+    let muted_label = tr("muted", lang);
     let state = if mute {
-        tr("muted", lang)
+        muted_label.clone()
     } else {
         format!("{percent}%")
     };
@@ -48,6 +62,7 @@ pub(crate) fn format(
     OsdContent {
         device,
         state,
+        muted_label,
         percent,
         muted: mute,
     }
@@ -133,106 +148,4 @@ fn lighten(color: Rgb, pct: u8) -> Rgb {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::audio::AudioDevice;
-
-    fn dev(name: &str) -> AudioDevice {
-        AudioDevice {
-            id: "a".into(),
-            name: name.into(),
-        }
-    }
-
-    #[test]
-    fn unmuted_shows_percent_and_fill() {
-        let c = format(Some(&dev("Speaker")), 72, false, Lang::Zh);
-        assert_eq!(c.device, "Speaker");
-        assert_eq!(c.state, "72%");
-        assert_eq!(c.percent, 72);
-        assert!(!c.muted);
-    }
-
-    #[test]
-    fn muted_swaps_state_for_the_word() {
-        let zh = format(Some(&dev("Speaker")), 72, true, Lang::Zh);
-        assert_eq!(zh.state, "静音");
-        assert!(zh.muted);
-        // The bar still reflects the volume under the mute.
-        assert_eq!(zh.percent, 72);
-        let en = format(Some(&dev("Speaker")), 72, true, Lang::En);
-        assert_eq!(en.state, "Muted");
-    }
-
-    #[test]
-    fn missing_device_leaves_the_line_empty() {
-        let c = format(None, 50, false, Lang::En);
-        assert!(c.device.is_empty());
-        assert_eq!(c.state, "50%");
-    }
-
-    #[test]
-    fn percent_is_clamped_to_the_bar_range() {
-        assert_eq!(format(None, 150, false, Lang::En).percent, 100);
-    }
-
-    #[test]
-    fn long_names_truncate_and_newlines_are_sanitized() {
-        let long = format(Some(&dev(&"X".repeat(200))), 50, false, Lang::Zh);
-        assert_eq!(long.device.chars().count(), OSD_NAME_CHARS - 1);
-        assert!(long.device.ends_with('…'));
-
-        let injected = format(Some(&dev("Speaker\nInjected")), 50, false, Lang::En);
-        assert!(!injected.device.contains('\n'));
-        assert_eq!(injected.device, "Speaker Injected");
-    }
-
-    #[test]
-    fn light_and_dark_cards_are_opposite() {
-        let light = palette(true, None).card;
-        let dark = palette(false, None).card;
-        assert!(
-            light.0 > dark.0,
-            "light card must be brighter than the dark one"
-        );
-        // The hairline has to stay distinguishable from the card in both themes.
-        for light_theme in [true, false] {
-            let p = palette(light_theme, None);
-            assert_ne!(p.border, p.card, "hairline invisible on its own card");
-            assert_ne!(p.track, p.card, "track invisible on its own card");
-        }
-    }
-
-    #[test]
-    fn light_theme_uses_the_accent_verbatim() {
-        let accent = (0x11, 0x22, 0x33);
-        assert_eq!(palette(true, Some(accent)).fill, accent);
-    }
-
-    #[test]
-    fn dark_theme_raises_the_accent_luminance() {
-        let accent = (0x00, 0x78, 0xD4);
-        let raised = palette(false, Some(accent)).fill;
-        assert_ne!(
-            raised, accent,
-            "dark surfaces must not reuse the light accent"
-        );
-        assert!(raised.0 >= accent.0 && raised.1 >= accent.1 && raised.2 >= accent.2);
-        assert!(raised != (255, 255, 255), "must stay a colour, not white");
-    }
-
-    #[test]
-    fn missing_accent_falls_back_to_the_windows_default() {
-        assert_eq!(palette(true, None).fill, DEFAULT_ACCENT);
-        assert_eq!(palette(false, None).fill, lighten(DEFAULT_ACCENT, 35));
-    }
-
-    #[test]
-    fn muted_fill_is_neutral_in_both_themes() {
-        for light in [true, false] {
-            let muted = palette(light, Some((0x00, 0x78, 0xD4))).muted_fill;
-            assert_eq!(muted.0, muted.1, "{muted:?} is tinted");
-            assert_eq!(muted.1, muted.2, "{muted:?} is tinted");
-        }
-    }
-}
+mod tests;

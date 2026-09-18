@@ -111,11 +111,15 @@ pub(super) struct Layout {
     pub(super) state: RECT,
 }
 
-/// Lay the card out for a card of `w`x`h` and a state text `state_w` wide.
+/// Lay the card out for a card of `w`x`h` with `state_col` px reserved for the
+/// state read-out.
 ///
-/// Pure: [`draw_card`] measures the text with GDI and then calls this, so
-/// the geometry can be unit-tested without a window.
-pub(super) fn layout(w: i32, h: i32, dpi: i32, state_w: i32, content: &OsdContent) -> Layout {
+/// `state_col` is a *reserved* width, not the width of the text on screen: the
+/// caller sizes it for the widest read-out the language can produce, so the bar
+/// keeps one length while the read-out counts digits. Pure: [`draw_card`]
+/// measures the text with GDI and then calls this, so the geometry can be
+/// unit-tested without a window.
+pub(super) fn layout(w: i32, h: i32, dpi: i32, state_col: i32, content: &OsdContent) -> Layout {
     let has_name = !content.device.is_empty();
     // Without a device line the bar is centred instead of bottom-aligned.
     let bar_bottom = if has_name {
@@ -127,7 +131,8 @@ pub(super) fn layout(w: i32, h: i32, dpi: i32, state_w: i32, content: &OsdConten
     let bar_left = scale(PAD, dpi);
     // The bar stops short of the right-aligned state text rather than
     // running underneath it.
-    let bar_right = (w - scale(PAD, dpi) - state_w - scale(10, dpi)).max(bar_left + scale(4, dpi));
+    let bar_right =
+        (w - scale(PAD, dpi) - state_col - scale(10, dpi)).max(bar_left + scale(4, dpi));
     let fill_w = (bar_right - bar_left) * i32::try_from(content.percent).unwrap_or(0) / 100;
     // The thumb rides the fill head, kept inside the track so it cannot
     // overhang the card at either end.

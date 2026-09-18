@@ -106,7 +106,7 @@ pub fn autostart_state() -> AutostartState {
 fn cleanup_legacy_keys() {
     #[cfg(windows)]
     {
-        use super::wide::wide_z;
+        use super::utf16::wide_z;
         use windows::Win32::System::Registry::{
             HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, RegCloseKey, RegDeleteValueW, RegOpenKeyExW,
         };

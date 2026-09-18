@@ -9,7 +9,7 @@
 //! this costs no new dependency and no new `windows` feature.
 
 #[cfg(windows)]
-use super::wide::wide_z;
+use super::utf16::wide_z;
 
 /// Shell appearance the overlay mirrors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -9,18 +9,18 @@
 pub mod autostart;
 pub mod com;
 pub mod dialog;
-pub mod hook;
 pub mod hotkey;
-pub mod instance;
 pub mod locale;
 pub mod logging;
+pub mod mouse_hook;
 pub mod osd;
 pub mod pump;
 pub mod shell;
+pub mod single_instance;
 pub mod theme;
 #[cfg(windows)]
-pub mod wide;
+pub mod utf16;
 
 pub use autostart::{AutostartState, autostart_state, set_autostart};
 pub use com::{ComError, ComGuard};
-pub use instance::{InstanceError, SingleInstanceGuard};
+pub use single_instance::{InstanceError, SingleInstanceGuard};

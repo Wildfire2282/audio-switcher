@@ -3,8 +3,13 @@
 //! These exercise the overlay as a whole (window + layout + paint) rather than
 //! one module in isolation, which is why they sit beside `win`.
 
+use super::draw::STYLE;
 use super::layout::{fit, layout, place};
 use super::*;
+use crate::audio::AudioDevice;
+use crate::config::Lang;
+use crate::ui::osd::{Palette, format, palette};
+use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Gdi::{GetDC, GetPixel, ReleaseDC};
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetSystemMetrics, GetWindowRect, IsWindowVisible, MSG, PM_REMOVE,
@@ -52,6 +57,9 @@ struct Sample {
     fill_px: u32,
     track_px: u32,
     name_ink: u32,
+    /// X of the last column the slider painted, so its length can be compared
+    /// across read-outs without hard-coding a pixel count.
+    bar_right: i32,
 }
 
 /// Render `content` with `tokens` forced, then read the pixels back.
@@ -84,12 +92,15 @@ fn sample(tokens: Palette, content: &OsdContent) -> Sample {
         let mut fill_px = 0u32;
         let mut track_px = 0u32;
         let mut name_ink = 0u32;
+        let mut bar_right = -1i32;
         for x in scale(PAD, dpi)..(w - scale(PAD, dpi)) {
             let slider = GetPixel(dc, x, bar_mid).0 & 0x00FF_FFFF;
             if slider == fill_rgb {
                 fill_px += 1;
+                bar_right = x;
             } else if slider == track_rgb {
                 track_px += 1;
+                bar_right = x;
             }
             // Text is whatever differs from the card behind it, so the
             // check holds in either theme.
@@ -104,6 +115,7 @@ fn sample(tokens: Palette, content: &OsdContent) -> Sample {
             fill_px,
             track_px,
             name_ink,
+            bar_right,
         }
     };
     // Hide before returning so a failure cannot leave a card on screen.
@@ -188,9 +200,34 @@ fn named(percent: u32) -> OsdContent {
     OsdContent {
         device: "Speaker".into(),
         state: format!("{percent}%"),
+        muted_label: "Muted".into(),
         percent,
         muted: false,
     }
+}
+
+/// Regression: the bar used to stop one text-width short of the right-aligned
+/// read-out, so it visibly shortened as the read-out gained a digit (`5%` →
+/// `50%` → `100%`) or swapped to the mute word. Only the text that is drawn may
+/// change; the bar's right edge may not move.
+#[test]
+fn slider_keeps_one_length_whatever_the_readout_says() {
+    let tokens = palette(true, Some((0x00, 0x78, 0xD4)));
+    let device = AudioDevice {
+        id: "a".into(),
+        name: "Speaker".into(),
+    };
+    let narrow = sample(tokens, &format(Some(&device), 5, false, Lang::Zh));
+    let wide = sample(tokens, &format(Some(&device), 100, false, Lang::Zh));
+    let muted = sample(tokens, &format(Some(&device), 62, true, Lang::Zh));
+    assert_eq!(
+        narrow.bar_right, wide.bar_right,
+        "the bar resized for a wider read-out"
+    );
+    assert_eq!(
+        muted.bar_right, wide.bar_right,
+        "the bar resized for the mute word"
+    );
 }
 
 /// Bottom taskbar: the card sits above the icon (which is inside the
@@ -225,9 +262,9 @@ fn fit_clamps_out_of_a_left_taskbar() {
 
 #[test]
 fn layout_keeps_every_element_inside_the_card() {
-    let (w, h, dpi, state_w) = (scale(CARD_W, 96), scale(CARD_H, 96), 96, 24);
+    let (w, h, dpi, state_col) = (scale(CARD_W, 96), scale(CARD_H, 96), 96, 24);
     let content = named(72);
-    let l = layout(w, h, dpi, state_w, &content);
+    let l = layout(w, h, dpi, state_col, &content);
     for r in [l.name, l.bar_track, l.bar_fill, l.thumb, l.state] {
         assert!(
             r.left >= 0 && r.top >= 0 && r.right <= w && r.bottom <= h,
@@ -252,10 +289,10 @@ fn layout_keeps_every_element_inside_the_card() {
 /// cannot poke out of the card at either end of the range.
 #[test]
 fn layout_keeps_the_thumb_on_the_track() {
-    let (w, h, dpi, state_w) = (scale(CARD_W, 96), scale(CARD_H, 96), 96, 24);
+    let (w, h, dpi, state_col) = (scale(CARD_W, 96), scale(CARD_H, 96), 96, 24);
     let radius = scale(THUMB_D, dpi) / 2;
     for percent in [0, 5, 50, 95, 100] {
-        let l = layout(w, h, dpi, state_w, &named(percent));
+        let l = layout(w, h, dpi, state_col, &named(percent));
         assert_eq!(l.thumb.right - l.thumb.left, radius * 2, "{percent}%");
         assert_eq!(l.thumb.bottom - l.thumb.top, radius * 2, "{percent}%");
         assert!(
