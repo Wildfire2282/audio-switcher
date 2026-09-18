@@ -31,8 +31,14 @@ if (!(Select-String -Path "audio-switcher.manifest" -Pattern "PerMonitorV2")) { 
 # 7. theme/log check: ensure verbose log default off via config test
 Write-Host "[7] theme & log paths verified"
 
-# 8. clippy (respects Cargo.toml lints; correctness=deny)
-Write-Host "[8] cargo clippy --all-targets"
-cargo clippy --all-targets
+# 8. formatting (rustfmt is the single formatter; drift is a review cost)
+Write-Host "[8] cargo fmt --all -- --check"
+cargo fmt --all -- --check
+if ($LASTEXITCODE -ne 0) { throw "formatting drifted; run cargo fmt --all" }
+
+# 9. clippy (respects Cargo.toml lints; -D warnings so style/perf warnings cannot
+#    accumulate silently: the Cargo.toml groups emit warnings, not errors)
+Write-Host "[9] cargo clippy --all-targets -- -D warnings"
+cargo clippy --all-targets -- -D warnings
 if ($LASTEXITCODE -ne 0) { throw "clippy failed" }
 Write-Host "Smoke PASSED"
