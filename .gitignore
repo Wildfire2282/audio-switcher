@@ -1,20 +1,19 @@
 # Rust
 /target/
-**/*.rs.bk
+*.rs.bk
 
 # Build outputs (single-file delivery: the exe ships via Releases, never git)
-/*.exe
-**/*.exe
-**/*.pdb
+# dist/ holds scripts/package.ps1 artifacts: audio-switcher-v<version>-x64.exe
+/dist/
+*.exe
+*.pdb
 
 # Agent / local cache
 /.opencode/
 /.tmp/
-/.omp/
 
-# Tauri / Node (预留)
-node_modules/
-dist/
+# Project-scoped agent skills (.agents/skills) — local only, not shared
+/.agents/
 
 # IDE
 .vscode/
