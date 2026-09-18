@@ -960,7 +960,10 @@ mod tests {
         let path = AppConfig::config_path_for(dir.path());
         AppConfig::default().save_to(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.starts_with("//"), "config must open with comment header");
+        assert!(
+            text.starts_with("//"),
+            "config must open with comment header"
+        );
         assert!(text.contains("Hotkeys / 快捷键"), "{text}");
         assert!(text.contains("默认无绑定"), "{text}");
         assert!(text.contains("\"hotkeys\""), "{text}");

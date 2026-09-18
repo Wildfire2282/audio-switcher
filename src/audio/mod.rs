@@ -137,7 +137,7 @@ pub trait AudioBackend {
     }
 
     /// Take and clear the "external volume/mute changed" flag (keyboard media
-    /// keys, other apps, system mixer). Drives a tooltip/icon refresh without
+    /// keys, other apps, system mixer). Drives a tray-icon refresh without
     /// polling. Default `false` for mocks.
     fn take_volume_changed(&mut self) -> bool {
         false

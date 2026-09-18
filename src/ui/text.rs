@@ -1,12 +1,12 @@
-//! Shared label helpers — single source of truth for menu/tooltip text.
+//! Shared label helpers — single source of truth for menu/overlay text.
 //!
 //! Device names come from WASAPI and may contain control characters or be
-//! excessively long for menus (muda) and tooltips (Win32 64-char limit).
-//! Both [`crate::ui::menu`] and [`crate::ui::tooltip`] funnel through here so
-//! truncation width and sanitization cannot drift apart.
+//! excessively long for menus (muda) and the overlay card. Both
+//! [`crate::ui::menu`] and [`crate::ui::osd`] funnel through here so truncation
+//! width and sanitization cannot drift apart.
 
-/// Maximum label width in characters (Win32 tooltip 64-char budget, shared
-/// with menus so truncation cannot drift apart).
+/// Maximum label width in characters (menu budget, shared with the overlay so
+/// truncation cannot drift apart).
 pub(crate) const MAX_LABEL_CHARS: usize = 64;
 
 /// Replace control whitespace with a plain space for UI display.

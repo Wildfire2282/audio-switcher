@@ -263,8 +263,14 @@ fn sync_entries(
 /// `default_id` is the currently active device; it is shown checked.
 /// `autostart` renders the toggle (`Unknown` grayed); `ui_lang` is the
 /// effective language labels render in while checks follow `cfg.lang`.
-#[must_use]
-pub fn build_menu(state: &MenuState<'_>) -> MenuHandles {
+///
+/// # Errors
+///
+/// Returns the `muda` failure when a submenu or an entry cannot be created —
+/// Win32 menu creation can fail under resource pressure. Callers must not
+/// panic on it: startup dialogs and exits through `TrayError`, and a runtime
+/// rebuild logs and keeps the menu that is already on screen.
+pub fn build_menu(state: &MenuState<'_>) -> Result<MenuHandles, muda::Error> {
     let MenuState {
         cfg,
         devices,
@@ -313,8 +319,7 @@ pub fn build_menu(state: &MenuState<'_>) -> MenuHandles {
     let mut vol_refs: Vec<&dyn muda::IsMenuItem> = vec![&vol_enabled, &vol_sep];
     vol_refs.extend(vol_items.iter().map(|item| item as &dyn muda::IsMenuItem));
     let vol_sub =
-        Submenu::with_id_and_items("volume_limit", tr("volume_limit", ui_lang), true, &vol_refs)
-            .expect("volume_limit submenu");
+        Submenu::with_id_and_items("volume_limit", tr("volume_limit", ui_lang), true, &vol_refs)?;
 
     let open_mixer = MenuItem::with_id(id::OPEN_MIXER, tr("open_mixer", ui_lang), true, None);
     let open_sound = MenuItem::with_id(id::OPEN_SOUND, tr("open_sound", ui_lang), true, None);
@@ -362,53 +367,52 @@ pub fn build_menu(state: &MenuState<'_>) -> MenuHandles {
         tr("language", ui_lang),
         true,
         &[&lang_system, &lang_zh, &lang_en],
-    )
-    .expect("language submenu");
+    )?;
     let about = MenuItem::with_id(id::ABOUT, tr("about", ui_lang), true, None);
     let exit = MenuItem::with_id(id::EXIT, tr("exit", ui_lang), true, None);
 
     let menu = Menu::new();
-    let _ = menu.append(&title);
-    let _ = menu.append(&PredefinedMenuItem::separator());
+    menu.append(&title)?;
+    menu.append(&PredefinedMenuItem::separator())?;
     if device_items.is_empty() && input_items.is_empty() {
         // Visible empty state: the device group must not vanish silently, or
         // a failed enumeration looks like a menu that lost its devices.
-        let _ = menu.append(&MenuItem::with_id(
+        menu.append(&MenuItem::with_id(
             id::NO_DEVICES,
             tr("no_devices", ui_lang),
             false,
             None,
-        ));
+        ))?;
     }
     if !device_items.is_empty() {
-        let _ = menu.append(&output_header);
+        menu.append(&output_header)?;
         for (_, _, item) in &device_items {
-            let _ = menu.append(item);
+            menu.append(item)?;
         }
-        let _ = menu.append(&PredefinedMenuItem::separator());
+        menu.append(&PredefinedMenuItem::separator())?;
     }
     if !input_items.is_empty() {
-        let _ = menu.append(&input_header);
+        menu.append(&input_header)?;
         for (_, _, item) in &input_items {
-            let _ = menu.append(item);
+            menu.append(item)?;
         }
-        let _ = menu.append(&PredefinedMenuItem::separator());
+        menu.append(&PredefinedMenuItem::separator())?;
     }
-    let _ = menu.append(&mute);
-    let _ = menu.append(&vol_sub);
-    let _ = menu.append(&PredefinedMenuItem::separator());
-    let _ = menu.append(&open_mixer);
-    let _ = menu.append(&open_sound);
-    let _ = menu.append(&open_hotkey_settings);
-    let _ = menu.append(&PredefinedMenuItem::separator());
-    let _ = menu.append(&refresh);
-    let _ = menu.append(&autostart_item);
-    let _ = menu.append(&lang_sub);
-    let _ = menu.append(&PredefinedMenuItem::separator());
-    let _ = menu.append(&about);
-    let _ = menu.append(&exit);
+    menu.append(&mute)?;
+    menu.append(&vol_sub)?;
+    menu.append(&PredefinedMenuItem::separator())?;
+    menu.append(&open_mixer)?;
+    menu.append(&open_sound)?;
+    menu.append(&open_hotkey_settings)?;
+    menu.append(&PredefinedMenuItem::separator())?;
+    menu.append(&refresh)?;
+    menu.append(&autostart_item)?;
+    menu.append(&lang_sub)?;
+    menu.append(&PredefinedMenuItem::separator())?;
+    menu.append(&about)?;
+    menu.append(&exit)?;
 
-    MenuHandles {
+    Ok(MenuHandles {
         menu,
         device_items,
         input_items,
@@ -425,7 +429,7 @@ pub fn build_menu(state: &MenuState<'_>) -> MenuHandles {
         lang_system,
         lang_zh,
         lang_en,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -508,7 +512,7 @@ mod tests {
                 autostart: &AutostartState::Disabled,
                 ui_lang: Lang::En,
             };
-            let handles = build_menu(&base);
+            let handles = build_menu(&base).expect("menu builds");
             assert_eq!(handles.lang_system.is_checked(), mode == Lang::System);
             assert_eq!(handles.lang_zh.is_checked(), mode == Lang::Zh);
             assert_eq!(handles.lang_en.is_checked(), mode == Lang::En);
@@ -528,7 +532,7 @@ mod tests {
             autostart: &AutostartState::Disabled,
             ui_lang: Lang::En,
         };
-        let handles = build_menu(&base);
+        let handles = build_menu(&base).expect("menu builds");
         // Separators carry no stable id; the last five actionable items are
         // the frozen tail: refresh → autostart → language → about → exit.
         let actionable = menu_ids(&handles.menu);
@@ -562,7 +566,8 @@ mod tests {
         let unknown = build_menu(&MenuState {
             autostart: &AutostartState::Unknown("no read".into()),
             ..base
-        });
+        })
+        .expect("menu builds");
         assert!(!unknown.autostart.is_enabled());
         assert!(!unknown.autostart.is_checked());
         assert!(unknown.autostart.text().contains("unknown"));
@@ -570,7 +575,8 @@ mod tests {
         let enabled = build_menu(&MenuState {
             autostart: &AutostartState::Enabled,
             ..base
-        });
+        })
+        .expect("menu builds");
         assert!(enabled.autostart.is_enabled());
         assert!(enabled.autostart.is_checked());
     }
@@ -590,7 +596,7 @@ mod tests {
             autostart: &AutostartState::Disabled,
             ui_lang: ui,
         };
-        let mut handles = build_menu(&base);
+        let mut handles = build_menu(&base).expect("menu builds");
         assert!(handles.sync_state(&MenuState {
             default_id: Some("b"),
             muted: true,
@@ -613,7 +619,7 @@ mod tests {
             autostart: &AutostartState::Disabled,
             ui_lang: ui,
         };
-        let mut handles = build_menu(&base);
+        let mut handles = build_menu(&base).expect("menu builds");
         // Rename requires rebuild — labels are baked at build time.
         let mut renamed = devices.clone();
         renamed[0].name = "Renamed".into();
@@ -661,7 +667,7 @@ mod tests {
             autostart: &AutostartState::Disabled,
             ui_lang: ui,
         };
-        let mut handles = build_menu(&base);
+        let mut handles = build_menu(&base).expect("menu builds");
         // Default switch applies in place.
         assert!(handles.sync_state(&MenuState {
             default_input_id: Some("m2"),
@@ -694,7 +700,7 @@ mod tests {
             ui_lang: Lang::En,
         };
         for ui_lang in [Lang::En, Lang::Zh] {
-            let handles = build_menu(&MenuState { ui_lang, ..base });
+            let handles = build_menu(&MenuState { ui_lang, ..base }).expect("menu builds");
             let ids = menu_ids(&handles.menu);
             let mixer = ids
                 .iter()
@@ -731,7 +737,7 @@ mod tests {
             autostart: &AutostartState::Disabled,
             ui_lang: ui,
         };
-        let mut handles = build_menu(&base);
+        let mut handles = build_menu(&base).expect("menu builds");
         assert!(handles.sync_state(&base));
         // Hotkeys are manual-only now: editing them must not force a rebuild.
         let bound = AppConfig {
@@ -760,7 +766,7 @@ mod tests {
             autostart: &AutostartState::Disabled,
             ui_lang: Lang::En,
         };
-        let empty = build_menu(&base);
+        let empty = build_menu(&base).expect("menu builds");
         assert!(menu_ids(&empty.menu).contains(&id::NO_DEVICES.to_string()));
 
         let devices = test_devices();
@@ -768,7 +774,8 @@ mod tests {
             devices: &devices,
             default_id: Some("a"),
             ..base
-        });
+        })
+        .expect("menu builds");
         assert!(!menu_ids(&populated.menu).contains(&id::NO_DEVICES.to_string()));
     }
 }

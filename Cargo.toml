@@ -45,6 +45,7 @@ features = [
   "Win32_System_SystemInformation", # GetTickCount64 monotonic clock (real)
   "Win32_Globalization", # GetUserDefaultLocaleName for Lang::System (locale)
   "Win32_UI_Input_KeyboardAndMouse", # RegisterHotKey/UnregisterHotKey for global hotkeys (hotkey)
+  "Win32_System_LibraryLoader", # GetModuleHandleW for OSD window-class registration (osd)
 ]
 
 [dev-dependencies]

@@ -13,8 +13,10 @@ pub mod hotkey;
 pub mod instance;
 pub mod locale;
 pub mod logging;
+pub mod osd;
 pub mod pump;
 pub mod shell;
+pub mod theme;
 
 pub use autostart::{AutostartState, autostart_state, set_autostart};
 pub use com::{ComError, ComGuard};

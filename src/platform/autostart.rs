@@ -24,8 +24,8 @@ pub enum AutostartError {
     Disable(#[source] auto_launch::Error),
 }
 
-/// Read-back of the autostart switch. `Unknown` carries the reason for the
-/// tooltip; the menu renders it grayed and never writes on it.
+/// Read-back of the autostart switch. `Unknown` carries the reason; the menu
+/// renders it grayed and never writes on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AutostartState {
     /// Registry value present.
