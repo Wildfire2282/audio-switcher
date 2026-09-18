@@ -1,8 +1,8 @@
 # AudioSwitcher
 
-Windows tray tool to switch the default audio device, toggle mute, and cap the master volume.
+Switch the default audio device, toggle mute, and cap the master volume from the Windows tray.
 
-Windows 托盘工具：切换默认音频设备、静音开关、主音量上限。
+在 Windows 托盘切换默认音频设备、开关静音、限制主音量上限。
 
 [English](#english) · [中文](#chinese)
 
@@ -14,24 +14,25 @@ Windows 托盘工具：切换默认音频设备、静音开关、主音量上限
 
 #### Devices
 
-- Pick an **output** or **input** device entry; the checked entry is the current default.
-- **Refresh Devices** re-detects devices — use after sleep/resume or replug if the list looks stale.
-- A grayed **No audio devices** line appears when nothing is detected at all.
+- An **output** or **input** entry sets that device as the default; the checked entry is the current default.
+- **Refresh Devices** re-enumerates the endpoints. Sleep/resume and replugging can leave the list stale.
+- When no endpoint is enumerated at all, a grayed **No audio devices** line replaces the list.
 
-#### Mute & volume
+#### Mute and volume
 
-- **Mute** toggles global mute; middle-click the tray icon does the same.
-- Hover the tray icon and roll the wheel to adjust volume — accelerates `1%` → `2%` → `5%` while rolling.
-- Every volume change pops a small overlay above the tray icon (device name, slider, percent); it disappears about a second after you stop rolling, and immediately on any mouse button press, so right-clicking the menu open never leaves it on top. The slider keeps one length whatever the read-out says (`5%`, `100%`, muted), so the bar never shifts under your eyes while you roll. It follows the Windows light/dark theme and your accent colour, in the same visual language as the system's own flyouts.
+- **Mute** toggles global mute. A middle-click on the tray icon does the same.
+- Rolling the wheel over the tray icon adjusts the volume, accelerating `1%` → `2%` → `5%` while the roll continues.
+- Every volume change raises a small overlay above the tray icon: device name, slider, percentage. It hides about a second after the last notch, and immediately on any mouse button, so a right-click never leaves it over the menu it opens. The slider holds one length for every read-out (`5%`, `100%`, muted), so the bar does not move while the volume changes.
+- The overlay follows the Windows shell — light/dark theme, accent colour, system menu font — and matches the visual language of the shell's own menus.
 
 #### Volume limit
 
-- The volume-limit submenu caps the master volume at `25` / `50` / `75%`.
-- Disable it with **Enabled** for unlimited volume.
+- **Volume limit** caps the master volume at `25`, `50` or `75%`.
+- **Enabled** turns the cap off.
 
 #### Hotkeys
 
-All hotkeys are unbound by default. Click **Open Hotkey Settings** (below **Open Sound Settings**) to open the config folder, then edit `hotkeys` in `config.json` — the file header carries bilingual comments with format, actions, and an example. Save and restart to apply.
+Hotkeys are unbound by default. **Open Hotkey Settings** opens the config folder; the `hotkeys` object in `config.json` takes one combination per action, and the file header documents the format bilingually. Changes apply after a restart.
 
 | Action | Config key | Step |
 | --- | --- | --- |
@@ -41,7 +42,7 @@ All hotkeys are unbound by default. Click **Open Hotkey Settings** (below **Open
 | Next output device | `next_device` | — |
 | Previous output device | `prev_device` | — |
 
-Each key takes a combination string (`null` disables):
+Each key takes a combination string; `null` disables the action:
 
 ```json
 {
@@ -52,16 +53,16 @@ Each key takes a combination string (`null` disables):
 }
 ```
 
-A combination another program already owns is reported in a dialog and disabled, so the remaining hotkeys keep working.
+A combination another program owns is reported in a dialog and left unbound; the remaining hotkeys register normally.
 
-#### System & settings
+#### System and settings
 
-- **Volume mixer** / **Sound settings** open the system tools. **Open Hotkey Settings** opens the config folder for manual hotkey editing.
-- **Run at startup** toggles login autostart (grayed out while the state cannot be read).
-- The language submenu offers **Follow System** / **中文** / **English**.
-- **About** opens the release homepage. **Exit** quits (it also releases the hotkeys).
+- **Volume mixer** and **Sound settings** open the system tools.
+- **Run at startup** toggles login autostart. It is grayed while the state cannot be read.
+- The language submenu offers **Follow System**, **中文**, **English**.
+- **About** opens the release homepage; **Exit** quits and releases the hotkeys.
 
-> Hovering the tray icon shows no tooltip: the shell would draw it exactly where the volume overlay appears, so the overlay is the single read-out. The tray icon is slashed when muted. All failures pop an error dialog; success is silent.
+The overlay is the single read-out for volume and mute: the tray icon carries no tooltip, which the shell would draw exactly over the overlay. The icon is slashed while muted. Failures raise a dialog; success is silent.
 
 ### Build
 
@@ -70,10 +71,13 @@ cargo build --release
 # -> target/release/audio-switcher.exe
 ```
 
-- Single file, nothing beside it: icons, `VERSIONINFO`, and the DPI manifest are embedded at build time; every dependency is a Rust static library, and the MSVC CRT is linked statically (`.cargo/config.toml`), so no VC++ Redistributable is needed on the target machine.
-- `scripts/package.ps1` runs that build and stages the release artifact `dist/audio-switcher-v<version>-x64.exe` together with a `sha256sum`-format `.sha256` sidecar. `dist/` holds exactly the current release — older artifacts are pruned on every run. The script also checks that the image imports only OS DLLs and stays inside the size budget.
-- `scripts/smoke.ps1` is the gate: build, tests, `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, and the DPI manifest. It runs in CI on every push, and locally in the pre-commit hook (`git config core.hooksPath .githooks`, once per clone); `-GateOnly` skips the one step that would move the machine's real audio devices. `tests/architecture.rs` runs with the suite and fails on a broken layering rule, a tooltip on the tray icon, a changed `windows` feature set, an oversized file, or an inline test block.
-- Releases are built by CI as well: push a `v*` tag (or run the workflow manually with a tag) and it packages, then publishes a GitHub release with `dist/audio-switcher-v<version>-x64.exe` attached. The description is read from `.github/release-notes/<tag>.md`. The release job depends on the gate, so a build that fails the gate cannot be published.
+The binary is self-contained: icons, `VERSIONINFO` and the DPI manifest are embedded at build time, every dependency is a Rust static library, and the MSVC CRT is linked statically (`.cargo/config.toml`), so the target machine needs no VC++ Redistributable.
+
+`scripts/package.ps1` builds and stages the release artifact `dist/audio-switcher-v<version>-x64.exe` with a `sha256sum` sidecar. `dist/` holds the current release only. The script fails unless the image imports OS DLLs alone and stays inside the size budget.
+
+`scripts/smoke.ps1` is the gate: build, tests, `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, and the DPI manifest. CI runs it on every push, and a pre-commit hook runs it locally (`git config core.hooksPath .githooks`, once per clone); `-GateOnly` omits the step that moves the machine's real audio devices. `tests/architecture.rs` fails the suite on a broken layering rule, a tooltip on the tray icon, a changed `windows` feature set, an oversized file, or an oversized inline test block.
+
+CI publishes releases: a `v*` tag (or the workflow run with a tag) packages the artifact and attaches it to a GitHub release whose description is read from `.github/release-notes/<tag>.md`. The release job requires the gate, so a build that fails it is not published.
 
 | What | Location |
 | --- | --- |
@@ -90,24 +94,25 @@ Runtime state lives outside the exe directory.
 
 #### 设备
 
-- 选择**输出**或**输入**设备条目；打勾的即当前默认设备。
-- **刷新设备**重新检测设备——睡眠恢复或重插后列表过时可用。
-- 未检测到任何设备时，显示灰色**无音频设备**行。
+- 选择**输出**或**输入**条目即把该设备设为默认；打勾的条目是当前默认设备。
+- **刷新设备**重新枚举端点。睡眠恢复与重插后列表可能过时。
+- 完全没有枚举到端点时，用灰色的**无音频设备**行替代列表。
 
 #### 静音与音量
 
-- **静音**切换全局静音；中键点击托盘图标效果相同。
-- 悬停托盘图标后滚滚轮调音量——滚动中按 `1%` → `2%` → `5%` 加速。
-- 每次音量变化都会在托盘图标上方弹出一小块浮层（设备名、滑块、百分比），停止滚动约一秒后消失，任何鼠标键点击也会让它立即消失——所以右键开菜单时不会被浮层压住。滑块长度恒定，不随右侧读数（`5%`、`100%`、静音）变化，滚动时条子不会在眼前跳来跳去。浮层跟随 Windows 深浅色主题与你的强调色，与系统自身浮出菜单保持同一套视觉语言。
+- **静音**切换全局静音；中键点击托盘图标等效。
+- 在托盘图标上滚动滚轮调节音量，持续滚动时按 `1%` → `2%` → `5%` 加速。
+- 每次音量变化都在托盘图标上方浮出小块浮层：设备名、滑块、百分比。最后一次滚动约一秒后隐藏，任何鼠标键按下也立即隐藏，因此右键不会把它留在刚打开的菜单之上。滑块对所有读数（`5%`、`100%`、静音）保持同一长度，音量变化时条子不移动。
+- 浮层跟随 Windows shell——深浅色主题、强调色、系统菜单字体——与 shell 自身菜单保持同一套视觉语言。
 
 #### 音量上限
 
-- 音量上限子菜单把主音量封顶在 `25` / `50` / `75%`。
-- 用**启用**关闭上限，不再封顶。
+- **音量上限**把主音量封顶在 `25` / `50` / `75%`。
+- **启用**关闭上限。
 
 #### 全局快捷键
 
-默认无绑定。点击**打开快捷键设置**（在**打开声音设置**之下）打开配置文件夹，再改 `config.json` 里的 `hotkeys`——文件头有中英文注释，写明格式、动作与示例。保存后重启生效。
+默认无绑定。**打开快捷键设置**打开配置文件夹；`config.json` 的 `hotkeys` 对象为每个动作填一个组合字符串，文件头以中英双语说明格式。改动在重启后生效。
 
 | 动作 | 配置键 | 步长 |
 | --- | --- | --- |
@@ -117,7 +122,7 @@ Runtime state lives outside the exe directory.
 | 下一个输出设备 | `next_device` | — |
 | 上一个输出设备 | `prev_device` | — |
 
-每个键填组合字符串（`null` 即关闭）：
+每个键填组合字符串；`null` 关闭该动作：
 
 ```json
 {
@@ -128,16 +133,16 @@ Runtime state lives outside the exe directory.
 }
 ```
 
-被其他程序占用的组合会弹窗报告并保持关闭，其余快捷键照常工作。
+被其他程序占用的组合会弹窗报告并保持未绑定；其余快捷键照常注册。
 
 #### 系统与设置
 
-- **音量合成器**／**声音设置**打开系统工具。**打开快捷键设置**打开配置文件夹，用于手动改快捷键。
-- **开机自启**开关登录自启（读取不到状态时置灰）。
-- 语言子菜单提供**跟随系统** / **中文** / **English**。
-- **关于**打开 release 主页。**退出**退出（同时释放快捷键）。
+- **音量合成器**与**声音设置**打开系统工具。
+- **开机自启**开关登录自启；读取不到状态时置灰。
+- 语言子菜单提供**跟随系统**、**中文**、**English**。
+- **关于**打开 release 主页；**退出**退出并释放快捷键。
 
-> 悬停托盘图标不再显示提示条——系统会把它画在音量浮层的正上方，直接把浮层遮住，所以浮层是唯一的读数来源。静音时托盘图标带斜杠。所有失败都弹窗报错，成功则静默。
+音量与静音的唯一读数来源是浮层：托盘图标不带提示条，系统会把它画在浮层正中。静音期间图标带斜杠。失败弹窗报告，成功静默。
 
 ### 构建
 
@@ -146,14 +151,17 @@ cargo build --release
 # -> target/release/audio-switcher.exe
 ```
 
-- 单文件，旁边无任何附带文件：图标、`VERSIONINFO`、DPI manifest 均在构建时嵌入；所有依赖都是 Rust 静态库，MSVC CRT 静态链接（`.cargo/config.toml`），目标机器无需 VC++ 运行库。
-- `scripts/package.ps1` 执行该构建，产出 release 工件 `dist/audio-switcher-v<version>-x64.exe` 及 `sha256sum` 格式的 `.sha256` 校验和文件。`dist/` 恒只保留当前发布件，每次打包会清理旧版本。同时检查镜像只导入 OS DLL 且体积在预算内。
-- `scripts/smoke.ps1` 是门禁：构建、测试、`cargo fmt --all -- --check`、`cargo clippy --all-targets -- -D warnings` 与 DPI manifest。CI 每次推送都会跑，本地提交由 pre-commit hook 跑（`git config core.hooksPath .githooks`，每个 clone 一次）；`-GateOnly` 跳过会改动本机真实音频设备的那一步。`tests/architecture.rs` 随测试一起跑：分层被破坏、托盘图标带上提示条、`windows` feature 集合变动、单文件过大或单测内联超限都会失败。
-- 发布同样由 CI 完成：推 `v*` tag（或用 tag 手动触发 workflow）即自动打包并发布 GitHub release，附件 `dist/audio-switcher-v<version>-x64.exe`，描述取自 `.github/release-notes/<tag>.md`。release job 依赖门禁，所以门禁不过的构建不可能被发布。
+产物自包含：图标、`VERSIONINFO` 与 DPI manifest 在构建时嵌入，所有依赖都是 Rust 静态库，MSVC CRT 静态链接（`.cargo/config.toml`），目标机器无需 VC++ 运行库。
+
+`scripts/package.ps1` 构建并落盘发布工件 `dist/audio-switcher-v<version>-x64.exe` 与 `sha256sum` 格式的校验和文件。`dist/` 只保留当前发布件。镜像若导入 OS DLL 之外的库、或超出体积预算，脚本失败。
+
+`scripts/smoke.ps1` 是门禁：构建、测试、`cargo fmt --all -- --check`、`cargo clippy --all-targets -- -D warnings` 与 DPI manifest。CI 在每次推送时运行，本地由 pre-commit hook 运行（`git config core.hooksPath .githooks`，每个 clone 一次）；`-GateOnly` 省略会改动本机真实音频设备的那一步。`tests/architecture.rs` 在下列情形使测试失败：分层规则被破坏、托盘图标带上提示条、`windows` feature 集合变动、单文件过大、内联测试块过大。
+
+发布由 CI 完成：推 `v*` tag（或以 tag 运行 workflow）即打包工件并附到 GitHub release，描述取自 `.github/release-notes/<tag>.md`。release job 依赖门禁，门禁不过的构建不会发布。
 
 | 内容 | 位置 |
 | --- | --- |
 | 配置 | `%APPDATA%\audio-switcher\` |
 | 日志 | `%LOCALAPPDATA%\audio-switcher\logs\` |
 
-运行时状态放在 exe 目录之外。
+运行时状态位于 exe 目录之外。
