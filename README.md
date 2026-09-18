@@ -24,7 +24,7 @@ Run `audio-switcher-v<version>-x64.exe` from the [releases page](https://github.
 
 - **Mute** toggles global mute. A middle-click on the tray icon does the same.
 - Rolling the wheel over the tray icon adjusts the volume, accelerating `1%` → `2%` → `5%` while the roll continues.
-- Every volume change raises a small overlay above the tray icon: device name, slider, percentage. It hides about a second after the last notch, and immediately on any mouse button, so a right-click never leaves it over the menu it opens. The slider holds one length for every read-out (`5%`, `100%`, muted), so the bar does not move while the volume changes.
+- Every volume change raises a small overlay above the tray icon: device name, slider, percentage. It hides about two seconds after the last notch, and immediately on any mouse button, so a right-click never leaves it over the menu it opens. The slider holds one length for every read-out (`5%`, `100%`, muted), so the bar does not move while the volume changes.
 - The overlay follows the Windows shell — light/dark theme, accent colour, system menu font — and matches the visual language of the shell's own menus.
 
 ### Volume limit
@@ -93,7 +93,7 @@ Both live outside the program's folder, so the exe can be moved or deleted on it
 
 - **静音**切换全局静音；中键点击托盘图标等效。
 - 在托盘图标上滚动滚轮调节音量，持续滚动时按 `1%` → `2%` → `5%` 加速。
-- 每次音量变化都在托盘图标上方浮出小块浮层：设备名、滑块、百分比。最后一次滚动约一秒后隐藏，任何鼠标键按下也立即隐藏，因此右键不会把它留在刚打开的菜单之上。滑块对所有读数（`5%`、`100%`、静音）保持同一长度，音量变化时条子不移动。
+- 每次音量变化都在托盘图标上方浮出小块浮层：设备名、滑块、百分比。最后一次滚动约两秒后隐藏，任何鼠标键按下也立即隐藏，因此右键不会把它留在刚打开的菜单之上。滑块对所有读数（`5%`、`100%`、静音）保持同一长度，音量变化时条子不移动。
 - 浮层跟随 Windows shell——深浅色主题、强调色、系统菜单字体——与 shell 自身菜单保持同一套视觉语言。
 
 ### 音量上限
