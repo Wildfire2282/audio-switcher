@@ -22,7 +22,7 @@ Windows 托盘工具：切换默认音频设备、静音开关、主音量上限
 
 - **Mute** toggles global mute; middle-click the tray icon does the same.
 - Hover the tray icon and roll the wheel to adjust volume — accelerates `1%` → `2%` → `5%` while rolling.
-- Every volume change pops a small overlay above the tray icon (device name, slider, percent); it disappears about a second after you stop rolling. It follows the Windows light/dark theme and your accent colour, in the same visual language as the system's own flyouts.
+- Every volume change pops a small overlay above the tray icon (device name, slider, percent); it disappears about a second after you stop rolling, and immediately on any mouse button press, so right-clicking the menu open never leaves it on top. It follows the Windows light/dark theme and your accent colour, in the same visual language as the system's own flyouts.
 
 #### Volume limit
 
@@ -97,7 +97,7 @@ Runtime state lives outside the exe directory.
 
 - **静音**切换全局静音；中键点击托盘图标效果相同。
 - 悬停托盘图标后滚滚轮调音量——滚动中按 `1%` → `2%` → `5%` 加速。
-- 每次音量变化都会在托盘图标上方弹出一小块浮层（设备名、滑块、百分比），停止滚动约一秒后消失。浮层跟随 Windows 深浅色主题与你的强调色，与系统自身浮出菜单保持同一套视觉语言。
+- 每次音量变化都会在托盘图标上方弹出一小块浮层（设备名、滑块、百分比），停止滚动约一秒后消失，任何鼠标键点击也会让它立即消失——所以右键开菜单时不会被浮层压住。浮层跟随 Windows 深浅色主题与你的强调色，与系统自身浮出菜单保持同一套视觉语言。
 
 #### 音量上限
 
