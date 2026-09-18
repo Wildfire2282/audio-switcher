@@ -10,6 +10,7 @@
 - 删代码删干净：不留 `_` 变量、兼容 shim、`// removed`。
 - 改 `platform/` 必须同步 `#[cfg(not(windows))]` 分支；本机编译不到。
 - 加依赖前跑 `scripts/package.ps1` 看体积。上限 819,200 字节，落盘前强制。
+- `master` 有分支保护：禁止 force push 与删除。要改历史就开分支。
 
 ## 注释
 
