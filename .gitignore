@@ -33,6 +33,4 @@ Desktop.ini
 !.env.example
 
 # Local reference checklists (not part of repo)
-# references/ + AGENTS.md 仅本地清单
 references/
-AGENTS.md
