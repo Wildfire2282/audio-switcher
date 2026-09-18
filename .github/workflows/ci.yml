@@ -1,0 +1,36 @@
+# The gate, unattended: the same script an agent runs locally, minus the
+# hardware integration step (step 3 moves the real default recording device and
+# master volume, so it must never run unattended).
+#
+# Everything the gate enforces is defined once, in `scripts/smoke.ps1` plus the
+# lints in `Cargo.toml` and the architecture tests in `tests/architecture.rs`.
+# `AGENTS.md` is local-only and absent from a fresh clone: the doc-budget test
+# self-skips rather than failing here.
+name: gate
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo registry and build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: Ensure rustfmt and clippy are installed
+        run: rustup component add rustfmt clippy
+
+      - name: Gate (build, test, fmt, clippy, manifest)
+        shell: pwsh
+        run: ./scripts/smoke.ps1 -GateOnly

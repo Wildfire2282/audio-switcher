@@ -69,6 +69,23 @@ perf = { level = "warn", priority = 1 }
 pedantic = { level = "allow", priority = -1 }
 nursery = { level = "allow", priority = -1 }
 cargo = { level = "warn", priority = -1 }
+# Selective pedantic lints, each brought to zero before being switched on:
+# they catch an undocumented failure mode, a dropped diagnostic or an
+# ambiguous `Option` shape. The rest of `pedantic` stays off on purpose —
+# `cast_possible_*` fights the range-guarded `as` casts at the Win32 boundary,
+# `borrow_as_ptr` fights the `&mut out` form the `windows` crate documents, and
+# `doc_markdown`/`items_after_statements` are churn without a defect behind them.
+assigning_clones = "warn"
+manual_let_else = "warn"
+map_unwrap_or = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+must_use_candidate = "warn"
+ref_option = "warn"
+ref_as_ptr = "warn"
+# Restriction group, but it is exactly the rule the code already follows:
+# every `unsafe` block carries a `// SAFETY:` comment saying why it is sound.
+undocumented_unsafe_blocks = "warn"
 
 [profile.release]
 opt-level = "z"
