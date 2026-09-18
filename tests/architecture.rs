@@ -214,3 +214,71 @@ fn no_source_file_outgrows_one_reading_pass() {
         );
     }
 }
+
+/// Release notes are the last rule that lived only in prose: they must be
+/// bilingual mirrors of each other, and must describe user-visible behaviour
+/// only. The release job checks the file exists; this checks it is usable.
+#[test]
+fn release_notes_are_bilingual_and_user_visible() {
+    const MIRROR: &[(&str, &str)] = &[("新增", "Added"), ("修复", "Fixed"), ("变更", "Changed")];
+
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/release-notes");
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "md") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let text = fs::read_to_string(&path).expect("readable release notes");
+
+        let title = text.lines().next().unwrap_or_default();
+        assert!(
+            title.starts_with("## [") && title.contains("] - "),
+            "{name}: first line must be `## [<version>] - YYYY-MM-DD`, found `{title}`"
+        );
+
+        // Bullets under one heading, or None when the heading is absent.
+        let bullets = |heading: &str| -> Option<usize> {
+            let mut count = None;
+            let mut inside = false;
+            for line in text.lines() {
+                if let Some(rest) = line.strip_prefix("### ") {
+                    inside = rest.trim() == heading;
+                    if inside {
+                        count = Some(0);
+                    }
+                } else if inside && line.starts_with("- ") {
+                    count = Some(count.unwrap_or(0) + 1);
+                }
+            }
+            count
+        };
+
+        for (zh, en) in MIRROR {
+            match (bullets(zh), bullets(en)) {
+                (None, None) => {}
+                (Some(n), Some(m)) => assert_eq!(
+                    n, m,
+                    "{name}: `### {zh}` has {n} entries but `### {en}` has {m}"
+                ),
+                (Some(_), None) => panic!("{name}: `### {zh}` has no `### {en}` mirror"),
+                (None, Some(_)) => panic!("{name}: `### {en}` has no `### {zh}` mirror"),
+            }
+        }
+
+        for banned in ["sha256", "SHA256", "bytes", "KB"] {
+            assert!(
+                !text.contains(banned),
+                "{name}: release notes must not mention `{banned}` - only user-visible behaviour"
+            );
+        }
+    }
+}
