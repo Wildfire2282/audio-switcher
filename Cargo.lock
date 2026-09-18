@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "audio-switcher"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "auto-launch",
  "embed-manifest",
