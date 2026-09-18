@@ -2,6 +2,31 @@
 //!
 //! Libraries never install a subscriber; this helper only exists so the
 //! binary entry stays at guards → `App::run`. The install site is `main`.
+//!
+//! Level: `WARN` and above by default, overridden by the `AUDIO_SWITCHER_LOG`
+//! environment variable (`error` / `warn` / `info` / `debug` / `trace`). The
+//! variable is parsed here rather than through `tracing-subscriber`'s
+//! `env-filter` feature, which would pull `regex` and `matchers` into a
+//! single-file binary that has a hard size budget.
+
+/// Parse `AUDIO_SWITCHER_LOG` into a verbosity level.
+///
+/// Unknown and absent values keep the default (`INFO`, i.e. the shipped
+/// behaviour).
+fn max_level() -> tracing::Level {
+    match std::env::var("AUDIO_SWITCHER_LOG")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "error" => tracing::Level::ERROR,
+        "warn" => tracing::Level::WARN,
+        "debug" => tracing::Level::DEBUG,
+        "trace" => tracing::Level::TRACE,
+        _ => tracing::Level::INFO,
+    }
+}
 
 /// Install the `%LOCALAPPDATA%\<tool>\logs\` file sink and the
 /// show-dialog-and-exit panic hook. Idempotent best effort: when the log
@@ -18,6 +43,7 @@ pub fn init() {
         // a console layer would be invisible; the file is the record.
         let subscriber = tracing_subscriber::fmt()
             .with_ansi(false)
+            .with_max_level(max_level())
             .with_writer(std::sync::Mutex::new(file))
             .finish();
         let _ = tracing::subscriber::set_global_default(subscriber);

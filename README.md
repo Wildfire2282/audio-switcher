@@ -22,6 +22,7 @@ Windows 托盘工具：切换默认音频设备、静音开关、主音量上限
 
 - **Mute** toggles global mute; middle-click the tray icon does the same.
 - Hover the tray icon and roll the wheel to adjust volume — accelerates `1%` → `2%` → `5%` while rolling.
+- Every volume change pops a small overlay above the tray icon (device name, slider, percent); it disappears about a second after you stop rolling. It follows the Windows light/dark theme and your accent colour, in the same visual language as the system's own flyouts.
 
 #### Volume limit
 
@@ -60,7 +61,7 @@ A combination another program already owns is reported in a dialog and disabled,
 - The language submenu offers **Follow System** / **中文** / **English**.
 - **About** opens the release homepage. **Exit** quits (it also releases the hotkeys).
 
-> The tooltip shows device and state on one line (`Speaker - 62%`, or `Speaker - Muted` while muted); the tray icon is slashed when muted. All failures pop an error dialog; success is silent.
+> Hovering the tray icon shows no tooltip: the shell would draw it exactly where the volume overlay appears, so the overlay is the single read-out. The tray icon is slashed when muted. All failures pop an error dialog; success is silent.
 
 ### Build
 
@@ -70,7 +71,7 @@ cargo build --release
 ```
 
 - Single file, nothing beside it: icons, `VERSIONINFO`, and the DPI manifest are embedded at build time; every dependency is a Rust static library, and the MSVC CRT is linked statically (`.cargo/config.toml`), so no VC++ Redistributable is needed on the target machine.
-- `scripts/package.ps1` runs that build and emits the release artifact `dist/audio-switcher-v<version>-x64.exe` with its SHA256, while checking that the image imports only OS DLLs and stays inside the size budget.
+- `scripts/package.ps1` runs that build and stages the release artifact `dist/audio-switcher-v<version>-x64.exe` together with a `sha256sum`-format `.sha256` sidecar. `dist/` holds exactly the current release — older artifacts are pruned on every run. The script also checks that the image imports only OS DLLs and stays inside the size budget.
 - `scripts/smoke.ps1` is the pre-release gate (build, tests, clippy).
 
 | What | Location |
@@ -96,6 +97,7 @@ Runtime state lives outside the exe directory.
 
 - **静音**切换全局静音；中键点击托盘图标效果相同。
 - 悬停托盘图标后滚滚轮调音量——滚动中按 `1%` → `2%` → `5%` 加速。
+- 每次音量变化都会在托盘图标上方弹出一小块浮层（设备名、滑块、百分比），停止滚动约一秒后消失。浮层跟随 Windows 深浅色主题与你的强调色，与系统自身浮出菜单保持同一套视觉语言。
 
 #### 音量上限
 
@@ -134,7 +136,7 @@ Runtime state lives outside the exe directory.
 - 语言子菜单提供**跟随系统** / **中文** / **English**。
 - **关于**打开 release 主页。**退出**退出（同时释放快捷键）。
 
-> 提示条把设备和状态显示在一行（`Speaker - 62%`，静音时 `Speaker - Muted`）；静音时托盘图标带斜杠。所有失败都弹窗报错，成功则静默。
+> 悬停托盘图标不再显示提示条——系统会把它画在音量浮层的正上方，直接把浮层遮住，所以浮层是唯一的读数来源。静音时托盘图标带斜杠。所有失败都弹窗报错，成功则静默。
 
 ### 构建
 
@@ -144,7 +146,7 @@ cargo build --release
 ```
 
 - 单文件，旁边无任何附带文件：图标、`VERSIONINFO`、DPI manifest 均在构建时嵌入；所有依赖都是 Rust 静态库，MSVC CRT 静态链接（`.cargo/config.toml`），目标机器无需 VC++ 运行库。
-- `scripts/package.ps1` 执行该构建并产出 release 工件 `dist/audio-switcher-v<version>-x64.exe`（附 SHA256），同时检查镜像只导入 OS DLL 且体积在预算内。
+- `scripts/package.ps1` 执行该构建，产出 release 工件 `dist/audio-switcher-v<version>-x64.exe` 及 `sha256sum` 格式的 `.sha256` 校验和文件。`dist/` 恒只保留当前发布件，每次打包会清理旧版本。同时检查镜像只导入 OS DLL 且体积在预算内。
 - `scripts/smoke.ps1` 是发版门禁（构建、测试、clippy）。
 
 | 内容 | 位置 |

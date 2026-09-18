@@ -198,10 +198,7 @@ mod tests {
     #[test]
     fn hotkey_settings_labels() {
         assert_eq!(tr("open_hotkey_settings", Lang::Zh), "打开快捷键设置");
-        assert_eq!(
-            tr("open_hotkey_settings", Lang::En),
-            "Open Hotkey Settings"
-        );
+        assert_eq!(tr("open_hotkey_settings", Lang::En), "Open Hotkey Settings");
         assert_ne!(tr("config_error", Lang::Zh), "config_error");
         assert_ne!(tr("config_error", Lang::En), "config_error");
         assert_ne!(tr("no_devices", Lang::Zh), "no_devices");

@@ -1,4 +1,4 @@
-//! UI layer — tray icon, menu, tooltip and wheel handling.
+//! UI layer — tray icon, menu, overlay and wheel handling.
 
 /// Internationalisation helper.
 pub mod i18n;
@@ -6,10 +6,10 @@ pub mod i18n;
 pub mod icon;
 /// Tray menu builder.
 pub mod menu;
-/// Shared label sanitization/truncation for menu + tooltip.
+/// Overlay (OSD) content formatting.
+pub mod osd;
+/// Shared label sanitization/truncation for menu + overlay text.
 pub(crate) mod text;
-/// Tooltip formatting.
-pub mod tooltip;
 /// Tray wrapper.
 pub mod tray;
 /// Wheel acceleration state.
@@ -17,6 +17,5 @@ pub mod wheel;
 
 /// Re-exported for `crate::app`.
 pub use menu::MenuState;
-pub use tooltip::format_tooltip;
 pub use tray::TrayWrapper;
 pub use wheel::WheelState;

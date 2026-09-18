@@ -1,12 +1,12 @@
 //! Message-pump primitives. `app` owns the loop policy; this module owns the
 //! Win32 calls (`ui` and `app` must not call Win32 directly).
 
-/// Default wait timeout: periodic work (hook install, polling) still runs
-/// while idle CPU stays negligible.
+/// Idle wait cap: periodic work (hook install, polling) still runs while idle
+/// CPU stays negligible.
+///
+/// This is an upper bound, not a fixed cadence: `app` passes a shorter timeout
+/// when it holds a deadline (the overlay must hide on time).
 pub const PUMP_WAIT_MS: u32 = 200;
-
-/// Fast wait while wheel events are pending, so volume tracking stays smooth.
-const PUMP_WAIT_BUSY_MS: u32 = 8;
 
 /// Drain pending Win32 messages without blocking.
 pub(crate) fn pump_messages() {
@@ -38,26 +38,28 @@ pub(crate) fn pump_messages() {
     }
 }
 
-/// Block until input arrives or the timeout elapses.
-pub(crate) fn wait_for_input(wheel_pending: bool) {
+/// Block until input arrives or `timeout_ms` elapses.
+///
+/// `timeout_ms` is policy and belongs to `app`, which shortens it while the
+/// overlay holds a hide deadline.
+///
+/// No extra wake signal is needed for the wheel: the low-level hook is
+/// dispatched during message retrieval, and the system wakes this same wait so
+/// the retrieval can happen. A signal raised from inside the hook procedure
+/// could not help — it runs only after the wake it would be trying to cause.
+pub(crate) fn wait_for_input(timeout_ms: u32) {
     #[cfg(windows)]
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{
             MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, QS_ALLINPUT,
         };
-        let timeout = if wheel_pending {
-            PUMP_WAIT_BUSY_MS
-        } else {
-            PUMP_WAIT_MS
-        };
         // SAFETY: MsgWaitForMultipleObjectsEx with an empty handle slice and
         // QS_ALLINPUT is safe to call on the UI thread.
-        let _ = MsgWaitForMultipleObjectsEx(Some(&[]), timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        let _ =
+            MsgWaitForMultipleObjectsEx(Some(&[]), timeout_ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
     }
     #[cfg(not(windows))]
-    std::thread::sleep(std::time::Duration::from_millis(u64::from(
-        if wheel_pending { PUMP_WAIT_BUSY_MS } else { 24 },
-    )));
+    std::thread::sleep(std::time::Duration::from_millis(u64::from(timeout_ms)));
 }
 
 /// Post `Quit`, ending the message loop.

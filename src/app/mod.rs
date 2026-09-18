@@ -7,14 +7,16 @@ pub mod handler;
 
 use std::time::{Duration, Instant};
 
-use crate::audio::{AudioBackend, RealBackend};
+use crate::audio::{AudioBackend, AudioDevice, RealBackend};
 use crate::config::{AppConfig, Lang};
 use crate::platform::hook;
 use crate::platform::hotkey::{self, Hotkey, HotkeyAction, HotkeyError};
+use crate::platform::osd::{OsdOverlay, VISIBLE_MS};
 use crate::platform::{AutostartState, autostart_state, pump};
 use crate::ui::i18n::tr;
+use crate::ui::osd::format as format_osd;
 use crate::ui::tray::TrayError;
-use crate::ui::{MenuState, TrayWrapper, WheelState, format_tooltip};
+use crate::ui::{MenuState, TrayWrapper, WheelState};
 use handler::MenuAction;
 
 /// Tray-build attempts at startup: Explorer may be restarting exactly then.
@@ -124,6 +126,20 @@ pub struct App<B: AudioBackend = RealBackend> {
     hook: Option<hook::WheelHook>,
     hook_install_at: Instant,
     should_exit: bool,
+    /// In-process mirror of the default endpoint's volume/mute/device.
+    ///
+    /// The wheel path must not read the endpoint back: one notch used to cost
+    /// three `Activate` round-trips plus a property-store read purely to redraw
+    /// feedback. The mirror is authoritative for our own writes and is resynced
+    /// from the backend on every external change and every full refresh.
+    cached_volume: u32,
+    cached_mute: bool,
+    cached_device: Option<AudioDevice>,
+    /// Hide deadline for the volume overlay; `None` while nothing is shown.
+    osd_deadline: Option<Instant>,
+    /// Lazily-created volume overlay; `None` means "no overlay" (the wheel and
+    /// the volume path keep working, exactly like a failed tray update).
+    osd: Option<OsdOverlay>,
     _com: crate::platform::ComGuard,
 }
 
@@ -243,13 +259,8 @@ impl<B: AudioBackend> App<B> {
             autostart: &autostart,
             ui_lang,
         });
-        tray.update_tooltip(format_tooltip(
-            snap.default_device.as_ref(),
-            snap.volume,
-            snap.mute,
-            ui_lang,
-        ));
-        tray.update_icon(snap.mute);
+        tray.update_icon_if_changed(snap.mute);
+        let osd = OsdOverlay::new();
         Ok(Self {
             cfg,
             ui_lang,
@@ -261,6 +272,11 @@ impl<B: AudioBackend> App<B> {
             hook: None,
             hook_install_at: Instant::now() + Duration::from_millis(180),
             should_exit: false,
+            cached_volume: snap.volume,
+            cached_mute: snap.mute,
+            cached_device: snap.default_device.clone(),
+            osd_deadline: None,
+            osd,
             _com: com,
         })
     }
@@ -288,32 +304,61 @@ impl<B: AudioBackend> App<B> {
             autostart: &autostart,
             ui_lang: self.ui_lang,
         });
-        self.tray.update_tooltip(format_tooltip(
-            snap.default_device.as_ref(),
-            snap.volume,
-            snap.mute,
-            self.ui_lang,
-        ));
-        self.tray.update_icon(snap.mute);
+        // The snapshot is authoritative: resyncing here is also what keeps an
+        // external change from leaving the mirror stale.
+        self.cached_volume = snap.volume;
+        self.cached_mute = snap.mute;
+        self.cached_device = snap.default_device.clone();
+        self.tray.update_icon_if_changed(snap.mute);
     }
 
-    fn update_tooltip_and_icon(&mut self) {
-        // Single COM round-trip via get_volume_and_mute; fallback only on error.
+    /// Read the default endpoint's device, volume and mute.
+    ///
+    /// Prefers the single-COM-round-trip batch; the returned flag is `false` when
+    /// the individual queries were needed instead, so the caller can say so once.
+    fn read_volume_state(&self) -> (Option<AudioDevice>, u32, bool, bool) {
         #[cfg(windows)]
-        if let Ok((vol, mute)) = self.backend.get_volume_and_mute() {
-            let dev = self.backend.get_default_device();
-            self.tray
-                .update_tooltip(format_tooltip(dev.as_ref(), vol, mute, self.ui_lang));
-            self.tray.update_icon(mute);
-            return;
+        if let Ok((volume, mute)) = self.backend.get_volume_and_mute() {
+            return (self.backend.get_default_device(), volume, mute, true);
         }
-        tracing::warn!("batch volume read failed; falling back to individual queries");
-        let dev = self.backend.get_default_device();
-        let vol = self.backend.get_volume().unwrap_or(0);
-        let mute = self.backend.get_mute().unwrap_or(false);
-        self.tray
-            .update_tooltip(format_tooltip(dev.as_ref(), vol, mute, self.ui_lang));
-        self.tray.update_icon(mute);
+        (
+            self.backend.get_default_device(),
+            self.backend.get_volume().unwrap_or(0),
+            self.backend.get_mute().unwrap_or(false),
+            false,
+        )
+    }
+
+    /// Re-read volume/mute/device after an external change (media keys, other
+    /// apps, the system mixer) and refresh the mirror plus the tray icon.
+    fn resync_volume_state(&mut self) {
+        let (device, volume, mute, batched) = self.read_volume_state();
+        if !batched {
+            tracing::warn!("batch volume read failed; falling back to individual queries");
+        }
+        self.cached_volume = volume;
+        self.cached_mute = mute;
+        self.cached_device = device;
+        self.tray.update_icon_if_changed(mute);
+    }
+
+    /// Show the volume overlay for the mirrored state and restart its deadline.
+    ///
+    /// The overlay is the feedback channel: the tray tooltip only paints after
+    /// the system hover delay and does not repaint against wheel input, so the
+    /// feedback has to be painted by this process.
+    fn show_osd(&mut self) {
+        let content = format_osd(
+            self.cached_device.as_ref(),
+            self.cached_volume,
+            self.cached_mute,
+            self.ui_lang,
+        );
+        let anchor = self.tray.icon_rect();
+        if let Some(osd) = &mut self.osd {
+            osd.show(content, anchor);
+        }
+        self.osd_deadline = Some(Instant::now() + Duration::from_millis(VISIBLE_MS));
     }
 
     fn save_and_refresh(&mut self, clamp: bool) {
@@ -452,32 +497,38 @@ impl<B: AudioBackend> App<B> {
 
     /// Toggle the default output device's mute.
     fn toggle_mute(&mut self) {
-        match self.backend.get_mute() {
-            Ok(m) => {
-                if let Err(e) = self.backend.set_mute(!m) {
-                    tracing::warn!("set_mute failed: {e}");
-                }
-                self.refresh_ui();
-            }
-            Err(e) => tracing::warn!("get_mute failed: {e}"),
+        let target = !self.cached_mute;
+        if let Err(e) = self.backend.set_mute(target) {
+            tracing::warn!("set_mute failed: {e}");
+            return;
         }
+        self.cached_mute = target;
+        // The menu check mark tracks the backend; `refresh_ui` re-reads it and
+        // also repaints the tray icon, which genuinely changed here.
+        self.refresh_ui();
+        self.show_osd();
     }
 
-    /// Nudge the master volume by `delta` percent and refresh the tray.
+    /// Nudge the master volume by `delta` percent and show feedback.
     ///
     /// Shared by the wheel (accelerated step) and the volume hotkeys (fixed
     /// [`HOTKEY_VOLUME_STEP`]); the configured limit clamps the result.
+    ///
+    /// Stepping from the mirror keeps one notch down to a single endpoint
+    /// write: no read-back, no property-store lookup, no Shell round-trip.
     fn nudge_volume(&mut self, delta: i32) {
-        match self.backend.get_volume() {
-            Ok(vol) => {
-                let clamped = crate::config::clamp_volume(stepped_volume(vol, delta), &self.cfg);
-                if let Err(e) = self.backend.set_volume(clamped) {
-                    tracing::warn!(error = %e, "set_volume failed");
-                }
-                self.update_tooltip_and_icon();
+        let target =
+            crate::config::clamp_volume(stepped_volume(self.cached_volume, delta), &self.cfg);
+        match self.backend.set_volume(target) {
+            // Only a confirmed write updates the mirror, so a failed write
+            // cannot leave the step origin ahead of the endpoint.
+            Ok(()) => self.cached_volume = target,
+            Err(e) => {
+                tracing::warn!(error = %e, "set_volume failed");
+                return;
             }
-            Err(e) => tracing::warn!(error = %e, "get_volume failed"),
         }
+        self.show_osd();
     }
 
     /// Switch to the default output `step` positions away, wrapping at both
@@ -536,15 +587,8 @@ impl<B: AudioBackend> App<B> {
                     button_state: MouseButtonState::Up,
                     ..
                 } => {
-                    match self.backend.get_mute() {
-                        Ok(m) => {
-                            if let Err(e) = self.backend.set_mute(!m) {
-                                tracing::warn!(error = %e, "set_mute failed");
-                            }
-                            self.refresh_ui();
-                        }
-                        Err(e) => tracing::warn!(error = %e, "get_mute failed"),
-                    }
+                    // Same path as the menu item and the mute hotkey.
+                    self.toggle_mute();
                     self.reset_wheel();
                 }
                 // EarTrumpet-style hover volume: no click required. A fresh
@@ -622,11 +666,11 @@ impl<B: AudioBackend> App<B> {
         }
         self.refresh_ui();
     }
-    /// External volume/mute change (media keys, other apps) — refresh tooltip
-    /// and icon without touching the menu.
+    /// External volume/mute change (media keys, other apps) — refresh the
+    /// cached state and the tray icon without touching the menu.
     fn poll_volume_state(&mut self) {
         if self.backend.take_volume_changed() {
-            self.update_tooltip_and_icon();
+            self.resync_volume_state();
         }
     }
     /// Drain global hotkeys pressed since the last frame.
@@ -634,6 +678,36 @@ impl<B: AudioBackend> App<B> {
         while let Some(action) = hotkey::take_pending() {
             self.handle_hotkey(action);
         }
+    }
+    /// Hide the overlay once its deadline passes.
+    ///
+    /// The deadline is loop policy rather than a `SetTimer`: `wait_timeout`
+    /// already shortens the wait to the remaining span, so the loop wakes on
+    /// time without a second timing mechanism.
+    fn poll_osd(&mut self) {
+        let Some(deadline) = self.osd_deadline else {
+            return;
+        };
+        if Instant::now() < deadline {
+            return;
+        }
+        self.osd_deadline = None;
+        if let Some(osd) = &self.osd {
+            osd.hide();
+        }
+    }
+    /// Wait timeout for this iteration.
+    ///
+    /// The idle cap, shortened to the overlay's remaining time so a hide is
+    /// never late by more than the wake granularity.
+    fn wait_timeout(&self) -> u32 {
+        let Some(deadline) = self.osd_deadline else {
+            return pump::PUMP_WAIT_MS;
+        };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        u32::try_from(remaining.as_millis())
+            .unwrap_or(pump::PUMP_WAIT_MS)
+            .min(pump::PUMP_WAIT_MS)
     }
 
     /// Run the message loop until `Exit` is requested.
@@ -653,7 +727,9 @@ impl<B: AudioBackend> App<B> {
             self.poll_wheel();
             self.poll_devices();
             self.poll_volume_state();
-            pump::wait_for_input(hook::peek_pending());
+            self.poll_osd();
+            let timeout = self.wait_timeout();
+            pump::wait_for_input(timeout);
         }
         // Registration is thread-affine: release the combos on this thread.
         hotkey::unregister_all();
