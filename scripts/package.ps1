@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Single-file release packaging: build -> verify self-containment -> dist copy.
+# Single-file release packaging: build -> verify self-containment -> stage dist.
 #
 # The artifact is one exe with nothing beside it:
 #   * icons + VERSIONINFO embedded by build.rs (winres)
@@ -9,6 +9,9 @@
 #     vcruntime140.dll / VC++ Redistributable is required on the target machine
 # Config and logs are created at runtime under %APPDATA% / %LOCALAPPDATA%;
 # nothing is read from the exe's own directory.
+#
+# dist/ holds exactly one release: the exe plus its sha256sum-format `.sha256`
+# sidecar. Artifacts of other versions are pruned on every run.
 #
 # Run scripts/smoke.ps1 first: the three greens + clippy are the release gate.
 $ErrorActionPreference = "Stop"
@@ -55,21 +58,34 @@ try {
     }
     if ($bad) { throw "exe still depends on non-OS runtime libraries: $($bad -join ', ')" }
 
-    Write-Host "[5] copy to dist"
+    Write-Host "[5] stage dist (current release only)"
+    # Budget gate runs before staging: an oversized image must never reach dist/.
+    $size = (Get-Item $exe).Length
+    if ($size -gt $budget) { throw ("size {0:N0} exceeds the {1:N0}-byte budget (scheme §6)" -f $size, $budget) }
+
     $dist = Join-Path $root "dist"
     New-Item -ItemType Directory -Force -Path $dist | Out-Null
-    $out = Join-Path $dist "audio-switcher-v$version-x64.exe"
-    Copy-Item $exe $out -Force
+    $name = "audio-switcher-v$version-x64.exe"
+    $checksum = "$name.sha256"
+    Get-ChildItem -Path $dist -File |
+        Where-Object { $_.Name -notin @($name, $checksum) } |
+        ForEach-Object { Write-Host "      pruning $($_.Name)"; Remove-Item $_.FullName -Force }
 
-    $size = (Get-Item $out).Length
-    $hash = (Get-FileHash $out -Algorithm SHA256).Hash
+    $out = Join-Path $dist $name
+    Copy-Item $exe $out -Force
+    # sha256sum-format sidecar: lowercase hash, two spaces, bare file name.
+    $hash = (Get-FileHash $out -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sum = Join-Path $dist $checksum
+    [System.IO.File]::WriteAllText($sum, "$hash  $name`n")
+
+    Write-Host "[6] report"
     $info = (Get-Item $out).VersionInfo
     Write-Host ""
     Write-Host "artifact : $out"
     Write-Host ("size     : {0:N0} bytes ({1:N1} KB)" -f $size, ($size / 1KB))
     Write-Host ("sha256   : {0}" -f $hash)
+    Write-Host "checksum : $sum"
     Write-Host ("version  : file={0} product={1}" -f $info.FileVersion, $info.ProductName)
-    if ($size -gt $budget) { throw ("size {0:N0} exceeds the {1:N0}-byte budget (scheme §6)" -f $size, $budget) }
     Write-Host ("budget   : within {0:N0} bytes" -f $budget)
     Write-Host "Packaging PASSED"
 }
