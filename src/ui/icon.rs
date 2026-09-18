@@ -1,7 +1,7 @@
 //! Tray icon creation with caching.
 //!
 //! Icons are 32×32 RGBA rendered from the transparent-background black-glyph
-//! SVGs (`headphones.svg` unmuted, `headphone-off.svg` muted).
+//! SVGs (`icons/headphones.svg` unmuted, `icons/headphone-off.svg` muted).
 
 use std::sync::{LazyLock, Mutex};
 
