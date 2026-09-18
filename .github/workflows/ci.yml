@@ -34,3 +34,10 @@ jobs:
       - name: Gate (build, test, fmt, clippy, manifest)
         shell: pwsh
         run: ./scripts/smoke.ps1 -GateOnly
+
+      # The release path is part of the gate too: the size budget, the OS-only
+      # import list and the embedded manifest are enforced by the packager, so
+      # `cargo test` alone would let a packaging regression through.
+      - name: Package (size budget, import list, manifest)
+        shell: pwsh
+        run: ./scripts/package.ps1
