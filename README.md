@@ -22,7 +22,7 @@ Windows 托盘工具：切换默认音频设备、静音开关、主音量上限
 
 - **Mute** toggles global mute; middle-click the tray icon does the same.
 - Hover the tray icon and roll the wheel to adjust volume — accelerates `1%` → `2%` → `5%` while rolling.
-- Every volume change pops a small overlay above the tray icon (device name, slider, percent); it disappears about a second after you stop rolling, and immediately on any mouse button press, so right-clicking the menu open never leaves it on top. It follows the Windows light/dark theme and your accent colour, in the same visual language as the system's own flyouts.
+- Every volume change pops a small overlay above the tray icon (device name, slider, percent); it disappears about a second after you stop rolling, and immediately on any mouse button press, so right-clicking the menu open never leaves it on top. The slider keeps one length whatever the read-out says (`5%`, `100%`, muted), so the bar never shifts under your eyes while you roll. It follows the Windows light/dark theme and your accent colour, in the same visual language as the system's own flyouts.
 
 #### Volume limit
 
@@ -72,7 +72,8 @@ cargo build --release
 
 - Single file, nothing beside it: icons, `VERSIONINFO`, and the DPI manifest are embedded at build time; every dependency is a Rust static library, and the MSVC CRT is linked statically (`.cargo/config.toml`), so no VC++ Redistributable is needed on the target machine.
 - `scripts/package.ps1` runs that build and stages the release artifact `dist/audio-switcher-v<version>-x64.exe` together with a `sha256sum`-format `.sha256` sidecar. `dist/` holds exactly the current release — older artifacts are pruned on every run. The script also checks that the image imports only OS DLLs and stays inside the size budget.
-- `scripts/smoke.ps1` is the pre-release gate (build, tests, clippy).
+- `scripts/smoke.ps1` is the gate: build, tests, `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, and the DPI manifest. It runs in CI on every push, and locally in the pre-commit hook (`git config core.hooksPath .githooks`, once per clone); `-GateOnly` skips the one step that would move the machine's real audio devices. `tests/architecture.rs` runs with the suite and fails on a broken layering rule, a tooltip on the tray icon, a changed `windows` feature set, an oversized file, or an inline test block.
+- Releases are built by CI as well: push a `v*` tag (or run the workflow manually with a tag) and it packages, then publishes a GitHub release with `dist/audio-switcher-v<version>-x64.exe` attached. The description is read from `.github/release-notes/<tag>.md`. The release job depends on the gate, so a build that fails the gate cannot be published.
 
 | What | Location |
 | --- | --- |
@@ -97,7 +98,7 @@ Runtime state lives outside the exe directory.
 
 - **静音**切换全局静音；中键点击托盘图标效果相同。
 - 悬停托盘图标后滚滚轮调音量——滚动中按 `1%` → `2%` → `5%` 加速。
-- 每次音量变化都会在托盘图标上方弹出一小块浮层（设备名、滑块、百分比），停止滚动约一秒后消失，任何鼠标键点击也会让它立即消失——所以右键开菜单时不会被浮层压住。浮层跟随 Windows 深浅色主题与你的强调色，与系统自身浮出菜单保持同一套视觉语言。
+- 每次音量变化都会在托盘图标上方弹出一小块浮层（设备名、滑块、百分比），停止滚动约一秒后消失，任何鼠标键点击也会让它立即消失——所以右键开菜单时不会被浮层压住。滑块长度恒定，不随右侧读数（`5%`、`100%`、静音）变化，滚动时条子不会在眼前跳来跳去。浮层跟随 Windows 深浅色主题与你的强调色，与系统自身浮出菜单保持同一套视觉语言。
 
 #### 音量上限
 
@@ -147,7 +148,8 @@ cargo build --release
 
 - 单文件，旁边无任何附带文件：图标、`VERSIONINFO`、DPI manifest 均在构建时嵌入；所有依赖都是 Rust 静态库，MSVC CRT 静态链接（`.cargo/config.toml`），目标机器无需 VC++ 运行库。
 - `scripts/package.ps1` 执行该构建，产出 release 工件 `dist/audio-switcher-v<version>-x64.exe` 及 `sha256sum` 格式的 `.sha256` 校验和文件。`dist/` 恒只保留当前发布件，每次打包会清理旧版本。同时检查镜像只导入 OS DLL 且体积在预算内。
-- `scripts/smoke.ps1` 是发版门禁（构建、测试、clippy）。
+- `scripts/smoke.ps1` 是门禁：构建、测试、`cargo fmt --all -- --check`、`cargo clippy --all-targets -- -D warnings` 与 DPI manifest。CI 每次推送都会跑，本地提交由 pre-commit hook 跑（`git config core.hooksPath .githooks`，每个 clone 一次）；`-GateOnly` 跳过会改动本机真实音频设备的那一步。`tests/architecture.rs` 随测试一起跑：分层被破坏、托盘图标带上提示条、`windows` feature 集合变动、单文件过大或单测内联超限都会失败。
+- 发布同样由 CI 完成：推 `v*` tag（或用 tag 手动触发 workflow）即自动打包并发布 GitHub release，附件 `dist/audio-switcher-v<version>-x64.exe`，描述取自 `.github/release-notes/<tag>.md`。release job 依赖门禁，所以门禁不过的构建不可能被发布。
 
 | 内容 | 位置 |
 | --- | --- |
