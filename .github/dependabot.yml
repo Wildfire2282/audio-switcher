@@ -1,0 +1,22 @@
+# Dependency drift, caught by the gate rather than by a reader.
+#
+# A cargo bump arrives as a PR, and the PR runs the same gate as everything
+# else - including `scripts/package.ps1`, which enforces the 819,200-byte
+# release budget. So a dependency that inflates the binary fails before merge
+# instead of being discovered at release time.
+#
+# The github-actions ecosystem keeps the workflow's own actions current: their
+# runtimes get deprecated on GitHub's schedule (checkout/cache were on Node 20
+# until they were moved to v7/v6 by hand).
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
