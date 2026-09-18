@@ -24,13 +24,13 @@ serde_json = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
 # tracing-subscriber lives here (not dev-deps): the release binary file sink
-# links it at runtime; dev-deps do not link into binaries. Sync via std only
-# (§1.2); all Windows API surface resolves via the `windows` crate.
+# links it at runtime; dev-deps do not link into binaries. Sync via std only;
+# all Windows API surface resolves via the `windows` crate.
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 [dependencies.windows]
 version = "0.62.2"
 features = [
-  # §4-mapped minimum subset (each removal verified with `cargo check`):
+  # Minimum subset (each feature removal verified with `cargo check`):
   "Win32_Foundation", # hook proc types, HWND/WPARAM/LPARAM/LRESULT (hook, dialog, pump)
   "Win32_UI_WindowsAndMessaging", # MessageBoxW, pump/wait/quit, SetWindowPos, FindWindow (dialog, pump, hook)
   "Win32_UI_Shell", # ShellExecuteW for open_url/system tools (shell)

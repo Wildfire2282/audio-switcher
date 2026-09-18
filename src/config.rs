@@ -31,7 +31,7 @@ static CONFIG_PATH_CACHE: LazyLock<(PathBuf, bool)> = LazyLock::new(resolve_conf
 // ---------------------------------------------------------------------------
 
 /// UI language. `System` (the default) follows the OS locale once at
-/// startup; live re-resolution is deferred (see SPEC §8).
+/// startup; live re-resolution is deferred (no locale listener is installed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Lang {
@@ -63,7 +63,7 @@ impl Lang {
 
     /// Map a locale name (`"zh-CN"`, `"en-US"`) to a language. Pure and
     /// branch-tested. Traditional-Chinese locales fall back to English
-    /// (untranslated, recorded in SPEC); everything else is English.
+    /// (untranslated); everything else is English.
     #[must_use]
     pub fn for_locale_name(name: &str) -> Self {
         let lower = name.to_ascii_lowercase();
@@ -512,7 +512,7 @@ impl AppConfig {
     fn migrate(mut cfg: Self) -> Self {
         // Scope to v1: that schema could not tell an explicit `zh` choice
         // apart from its own default, so its `zh` re-picks once. From v2 on,
-        // `zh` is an explicit choice and must survive (SPEC §4).
+        // `zh` is an explicit choice and must survive migration.
         if cfg.version < 2 && cfg.lang == Lang::Zh {
             cfg.lang = Lang::System;
         }

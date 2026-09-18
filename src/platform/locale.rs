@@ -1,7 +1,7 @@
 //! One-shot system locale read for `Lang::System`.
 //!
 //! The value is resolved once at startup; live `intl` re-resolution is
-//! deferred (see SPEC §8), so this module owns no listener and no cache.
+//! deferred, so this module owns no listener and no cache.
 
 /// Read the user locale name (e.g. `"zh-CN"`, `"en-US"`).
 ///
