@@ -8,6 +8,9 @@
 //! Both live in the registry, which the crate already opens for autostart, so
 //! this costs no new dependency and no new `windows` feature.
 
+#[cfg(windows)]
+use super::wide::wide_z;
+
 /// Shell appearance the overlay mirrors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Appearance {
@@ -49,12 +52,9 @@ pub(crate) fn appearance() -> Appearance {
 /// Unpack the registry's `0xAABBGGRR` accent into `(r, g, b)`.
 #[cfg(windows)]
 fn accent_from_abgr(raw: u32) -> (u8, u8, u8) {
-    // Each byte is masked into range, so the fallbacks never fire; `debug_assert`
-    // keeps the intent honest if the encoding is ever re-derived.
+    // Masked to a byte before narrowing, so the fallback never fires.
     let byte = |shift: u32| u8::try_from((raw >> shift) & 0xFF).unwrap_or(0);
-    let rgb = (byte(0), byte(8), byte(16));
-    debug_assert_eq!(rgb.0 as u32, raw & 0xFF);
-    rgb
+    (byte(0), byte(8), byte(16))
 }
 
 /// Read a `REG_DWORD` from `HKCU\<subkey>`.
@@ -69,8 +69,8 @@ fn read_dword(subkey: &str, value: &str) -> Option<u32> {
     };
     use windows::core::PCWSTR;
 
-    let sub_w: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
-    let name_w: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
+    let sub_w = wide_z(subkey);
+    let name_w = wide_z(value);
     let mut hkey = HKEY(std::ptr::null_mut());
     // SAFETY: the subkey string outlives the call; `hkey` is written only on
     // success.

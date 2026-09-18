@@ -106,13 +106,14 @@ pub fn autostart_state() -> AutostartState {
 fn cleanup_legacy_keys() {
     #[cfg(windows)]
     {
+        use super::wide::wide_z;
         use windows::Win32::System::Registry::{
             HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, RegCloseKey, RegDeleteValueW, RegOpenKeyExW,
         };
         use windows::core::PCWSTR;
 
         const RUN_KEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
-        let run_w: Vec<u16> = RUN_KEY.encode_utf16().chain(std::iter::once(0)).collect();
+        let run_w = wide_z(RUN_KEY);
         let mut hkey = HKEY(std::ptr::null_mut());
         // SAFETY: RegOpenKeyExW with a subkey string living through the call;
         // `hkey` is written only on success.
@@ -130,7 +131,7 @@ fn cleanup_legacy_keys() {
             return;
         }
         for name in LEGACY_AUTOSTART_KEYS {
-            let name_w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+            let name_w = wide_z(name);
             // SAFETY: key handle valid, name string alive through the call.
             let status = unsafe { RegDeleteValueW(hkey, PCWSTR(name_w.as_ptr())) };
             if status.is_ok() {

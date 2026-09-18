@@ -6,6 +6,8 @@
 //! `show_autostart_error`; dialog owns no other platform state.
 
 use super::autostart::AutostartError;
+#[cfg(windows)]
+use super::wide::wide_z;
 
 /// Show a warning box titled with the tool display name.
 ///
@@ -17,11 +19,8 @@ pub(crate) fn show_msgbox(msg: &str) {
     {
         use windows::Win32::UI::WindowsAndMessaging::{MB_ICONWARNING, MB_OK, MessageBoxW};
         use windows::core::PCWSTR;
-        let wide: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
-        let title: Vec<u16> = crate::TOOL_DISPLAY_NAME
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
+        let wide = wide_z(msg);
+        let title = wide_z(crate::TOOL_DISPLAY_NAME);
         center_soon(title.clone());
         // SAFETY: MessageBoxW with null-terminated buffers alive through the call.
         unsafe {
@@ -49,11 +48,8 @@ pub fn show_critical(msg: &str) {
             MB_ICONERROR, MB_OK, MB_TOPMOST, MessageBoxW,
         };
         use windows::core::PCWSTR;
-        let wide: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
-        let title: Vec<u16> = crate::TOOL_DISPLAY_NAME
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
+        let wide = wide_z(msg);
+        let title = wide_z(crate::TOOL_DISPLAY_NAME);
         center_soon(title.clone());
         // SAFETY: MessageBoxW with null-terminated buffers alive through the call.
         unsafe {
