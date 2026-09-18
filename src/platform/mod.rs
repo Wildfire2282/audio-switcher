@@ -2,8 +2,9 @@
 //!
 //! `platform/*` modules are mutually unreferenced except for foundational
 //! use: `dialog` (message boxes) and `shell` may be called from `app`/`ui`,
-//! and `logging`/`shell` format `autostart` errors. Those edges are noted on
-//! the callee side per the module contract.
+//! `logging`/`shell` format `autostart` errors, and `wide` is the shared
+//! UTF-16 boundary conversion. Those edges are noted on the callee side per the
+//! module contract.
 
 pub mod autostart;
 pub mod com;
@@ -17,6 +18,8 @@ pub mod osd;
 pub mod pump;
 pub mod shell;
 pub mod theme;
+#[cfg(windows)]
+pub mod wide;
 
 pub use autostart::{AutostartState, autostart_state, set_autostart};
 pub use com::{ComError, ComGuard};

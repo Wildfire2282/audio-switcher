@@ -54,27 +54,25 @@ mod win {
     use windows::Win32::Graphics::Gdi::{
         BeginPaint, BitBlt, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, CreateCompatibleBitmap,
         CreateCompatibleDC, CreateFontIndirectW, CreateFontW, CreatePen, CreateSolidBrush,
-        DEFAULT_CHARSET, DEFAULT_GUI_FONT, DT_CALCRECT, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX,
-        DT_RIGHT, DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint,
-        FW_NORMAL, FillRect, GetDC, GetDeviceCaps, GetMonitorInfoW, GetStockObject, GetTextFaceW,
-        HBITMAP, HDC, HFONT, HGDIOBJ, InvalidateRect, LOGFONTW, LOGPIXELSX,
-        MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromRect, NULL_BRUSH, NULL_PEN,
-        OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID, ReleaseDC, RoundRect, SRCCOPY, SelectObject,
-        SetBkMode, SetTextColor, TRANSPARENT, UpdateWindow,
+        DEFAULT_CHARSET, DT_CALCRECT, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT,
+        DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FW_NORMAL,
+        FillRect, GetStockObject, HBITMAP, HDC, HFONT, HGDIOBJ, InvalidateRect, LOGFONTW,
+        NULL_BRUSH, NULL_PEN, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID, RoundRect, SRCCOPY,
+        SelectObject, SetBkMode, SetTextColor, TRANSPARENT, UpdateWindow,
     };
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, GetSystemMetrics,
-        HTTRANSPARENT, LWA_COLORKEY, NONCLIENTMETRICSW, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN,
-        SPI_GETNONCLIENTMETRICS, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOZORDER,
-        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
-        SystemParametersInfoW, WM_ERASEBKGND, WM_NCHITTEST, WM_PAINT, WM_SETTINGCHANGE,
-        WM_THEMECHANGED, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-        WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+        CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, HTTRANSPARENT,
+        LWA_COLORKEY, NONCLIENTMETRICSW, RegisterClassW, SPI_GETNONCLIENTMETRICS, SW_HIDE,
+        SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+        SetLayeredWindowAttributes, SetWindowPos, ShowWindow, SystemParametersInfoW, WM_ERASEBKGND,
+        WM_NCHITTEST, WM_PAINT, WM_SETTINGCHANGE, WM_THEMECHANGED, WNDCLASSW, WS_EX_LAYERED,
+        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
     };
     use windows::core::w;
 
     use crate::platform::theme;
+    use crate::platform::wide::wide;
     use crate::ui::osd::{Palette, palette};
 
     /// Gap between the tray icon and the overlay, logical pixels.
@@ -194,10 +192,6 @@ mod win {
         (v * dpi + 48) / 96
     }
 
-    fn wide(s: &str) -> Vec<u16> {
-        s.encode_utf16().collect()
-    }
-
     /// The process module handle, needed to own the window class.
     fn instance() -> Option<HINSTANCE> {
         // SAFETY: `GetModuleHandleW(None)` requests the current module; it
@@ -240,195 +234,27 @@ mod win {
         OK.load(Ordering::Acquire)
     }
 
-    /// Screen DPI, used to scale the card on high-DPI displays.
-    ///
-    /// Read from the screen device caps rather than `GetDpiForWindow` so the
-    /// crate keeps its minimal `windows` feature set.
-    fn screen_dpi() -> i32 {
-        // SAFETY: `GetDC(None)` returns the screen DC or null; the matching
-        // `ReleaseDC` runs below exactly once.
-        let dc = unsafe { GetDC(None) };
-        if dc.0.is_null() {
-            return 96;
-        }
-        // SAFETY: `dc` is a live screen DC from `GetDC` above.
-        let dpi = unsafe { GetDeviceCaps(Some(dc), LOGPIXELSX) };
-        // SAFETY: balances the `GetDC` above (same null hwnd).
-        unsafe { ReleaseDC(None, dc) };
-        if dpi > 0 { dpi } else { 96 }
-    }
-
-    /// Work area `(left, top, right, bottom)` of the monitor holding the anchor.
-    fn work_area(anchor: Anchor) -> (i32, i32, i32, i32) {
-        let (ax, ay, aw, ah) = anchor;
-        let rect = RECT {
-            left: ax,
-            top: ay,
-            right: ax + aw,
-            bottom: ay + ah,
-        };
-        // SAFETY: `MonitorFromRect` reads the `RECT` by pointer and returns a
-        // monitor handle or null.
-        let monitor = unsafe { MonitorFromRect(&raw const rect, MONITOR_DEFAULTTONEAREST) };
-        let mut info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
-        };
-        // SAFETY: `info.cbSize` is set per the API contract; `info` is a valid
-        // out-parameter.
-        if !monitor.0.is_null() && unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
-            let r = info.rcWork;
-            return (r.left, r.top, r.right, r.bottom);
-        }
-        // Fallback: the primary screen (no taskbar inset, but never off-screen).
-        // SAFETY: both metrics take no arguments.
-        (0, 0, unsafe { GetSystemMetrics(SM_CXSCREEN) }, unsafe {
-            GetSystemMetrics(SM_CYSCREEN)
-        })
-    }
-
-    /// Anchor to use when the tray icon rect is unavailable.
-    fn screen_anchor() -> Anchor {
-        // SAFETY: both metrics take no arguments.
-        let (w, h) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
-        (w / 2, h - 48, 0, 0)
-    }
-
-    /// Physical `(x, y)` for a card of `w`x`h` anchored to the tray icon.
-    fn place(w: i32, h: i32, anchor: Option<Anchor>, gap: i32) -> (i32, i32) {
-        let anchor = anchor.unwrap_or_else(screen_anchor);
-        fit(anchor, w, h, gap, work_area(anchor))
-    }
-
-    /// Fit a `w`x`h` card a `gap` away from `anchor`, inside `work`.
-    ///
-    /// Pure, so the placement rules are testable without a monitor: above the
-    /// icon, horizontally centred on it, flipped below when the taskbar leaves
-    /// no room above, then clamped into the work area.
-    fn fit(anchor: Anchor, w: i32, h: i32, gap: i32, work: (i32, i32, i32, i32)) -> (i32, i32) {
-        let (ax, ay, aw, ah) = anchor;
-        let (wl, wt, wr, wb) = work;
-        let mut x = ax + aw / 2 - w / 2;
-        let mut y = ay - h - gap;
-        // Taskbar at the top: no room above, so flip below the icon.
-        if y < wt {
-            y = ay + ah + gap;
-        }
-        x = x.clamp(wl, (wr - w).max(wl));
-        y = y.clamp(wt, (wb - h).max(wt));
-        (x, y)
-    }
-
-    /// Where each element of the card goes, in physical pixels.
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    struct Layout {
-        name: RECT,
-        bar_track: RECT,
-        bar_fill: RECT,
-        /// Bounding box of the round slider thumb.
-        thumb: RECT,
-        state: RECT,
-    }
-
-    /// Lay the card out for a card of `w`x`h` and a state text `state_w` wide.
-    ///
-    /// Pure: [`draw_card`] measures the text with GDI and then calls this, so
-    /// the geometry can be unit-tested without a window.
-    fn layout(w: i32, h: i32, dpi: i32, state_w: i32, content: &OsdContent) -> Layout {
-        let has_name = !content.device.is_empty();
-        // Without a device line the bar is centred instead of bottom-aligned.
-        let bar_bottom = if has_name {
-            scale(CARD_H - PAD, dpi)
-        } else {
-            h / 2 + scale(BAR_H, dpi) / 2
-        };
-        let bar_top = bar_bottom - scale(BAR_H, dpi);
-        let bar_left = scale(PAD, dpi);
-        // The bar stops short of the right-aligned state text rather than
-        // running underneath it.
-        let bar_right =
-            (w - scale(PAD, dpi) - state_w - scale(10, dpi)).max(bar_left + scale(4, dpi));
-        let fill_w = (bar_right - bar_left) * i32::try_from(content.percent).unwrap_or(0) / 100;
-        // The thumb rides the fill head, kept inside the track so it cannot
-        // overhang the card at either end.
-        let radius = scale(THUMB_D, dpi) / 2;
-        let head = bar_left + fill_w;
-        let centre = head.clamp(
-            bar_left + radius,
-            (bar_right - radius).max(bar_left + radius),
-        );
-        let mid = (bar_top + bar_bottom) / 2;
-        Layout {
-            name: RECT {
-                left: scale(PAD, dpi),
-                top: scale(NAME_TOP, dpi),
-                right: w - scale(PAD, dpi),
-                bottom: scale(NAME_TOP + NAME_H, dpi),
-            },
-            bar_track: RECT {
-                left: bar_left,
-                top: bar_top,
-                right: bar_right,
-                bottom: bar_bottom,
-            },
-            bar_fill: RECT {
-                left: bar_left,
-                top: bar_top,
-                right: head,
-                bottom: bar_bottom,
-            },
-            thumb: RECT {
-                left: centre - radius,
-                top: mid - radius,
-                right: centre + radius,
-                bottom: mid + radius,
-            },
-            state: RECT {
-                left: bar_right + scale(8, dpi),
-                top: bar_top - scale(8, dpi),
-                right: w - scale(PAD, dpi),
-                bottom: bar_bottom + scale(8, dpi),
-            },
-        }
-    }
-
-    /// The face name currently selected into `dc`.
-    fn selected_face(dc: HDC) -> String {
-        let mut actual = [0u16; 64];
-        // SAFETY: `actual` is a writable buffer for the face name; the call
-        // reports how much it filled in.
-        let len = unsafe { GetTextFaceW(dc, Some(&mut actual)) };
-        let filled = usize::try_from(len).unwrap_or(0).min(actual.len());
-        String::from_utf16_lossy(&actual[..filled.saturating_sub(1)])
-    }
-
+    mod layout;
     /// Create the card's font and select it into `dc`.
     ///
-    /// The shell's own menu font comes first, so the card reads as one more menu
-    /// in the same language — and so a user-chosen menu font size is honoured
-    /// automatically. It is accepted whatever face it names, because on a
-    /// non-Latin system that face is the correct one.
+    /// Prefers the shell's own menu font, so the card reads as one more menu in
+    /// the same language — and so a user-chosen menu font size is honoured
+    /// automatically. That face is accepted whatever it names, because on a
+    /// non-Latin system it is the correct one.
     ///
-    /// Without it, asks for Windows 11's UI face and then Segoe UI, checking
-    /// what GDI actually granted rather than accepting a silent substitution,
-    /// and finally falls back to the stock GUI font.
-    ///
-    /// Returns the font and the object it replaced in `dc`.
+    /// Returns the font, always owned by the caller, and the object it replaced
+    /// in `dc`.
     fn select_card_font(dc: HDC, dpi: i32) -> (HFONT, HGDIOBJ) {
-        if let Some(logfont) = menu_font() {
-            // The returned LOGFONT is already sized for the system DPI, so it
-            // must not be scaled again.
-            // SAFETY: `logfont` is a fully initialized LOGFONTW, and `dc` is
-            // live.
-            let font = unsafe { CreateFontIndirectW(&raw const logfont) };
-            // SAFETY: `dc` is live and `font` was just created.
-            let previous = unsafe { SelectObject(dc, HGDIOBJ(font.0)) };
-            return (font, previous);
-        }
-        for face in [w!("Segoe UI Variable Text"), w!("Segoe UI")] {
-            // SAFETY: creates a font owned by this call; `dc` is live.
-            let font = unsafe {
-                CreateFontW(
+        // SAFETY: `dc` is live, and every `LOGFONTW` handed to GDI below is
+        // fully initialized.
+        let font = unsafe {
+            match menu_font() {
+                // Already sized for the system DPI, so not scaled again.
+                Some(logfont) => CreateFontIndirectW(&raw const logfont),
+                // `SPI_GETNONCLIENTMETRICS` does not fail in a normal session. A
+                // named face is a better guess than a zeroed `LOGFONTW`, and GDI
+                // substitutes by family when the face is not installed.
+                None => CreateFontW(
                     -scale(FALLBACK_TEXT_PX, dpi),
                     0,
                     0,
@@ -442,30 +268,13 @@ mod win {
                     CLIP_DEFAULT_PRECIS,
                     CLEARTYPE_QUALITY,
                     0,
-                    face,
-                )
-            };
-            // SAFETY: `dc` is live and `font` was just created.
-            let previous = unsafe { SelectObject(dc, HGDIOBJ(font.0)) };
-            let name = selected_face(dc);
-            if name.starts_with("Segoe UI") {
-                return (font, previous);
+                    w!("Segoe UI"),
+                ),
             }
-            tracing::debug!("osd: '{name}' substituted for the requested UI face");
-            // Wrong substitution: put the previous font back and try the next.
-            // SAFETY: restores the object selected just above, then releases the
-            // font this iteration created.
-            unsafe {
-                SelectObject(dc, previous);
-                let _ = DeleteObject(HGDIOBJ(font.0));
-            }
-        }
-        // Neither face is installed: the stock GUI font beats a substituted one.
-        // SAFETY: stock objects are never deleted; `dc` is live.
-        let stock = unsafe { GetStockObject(DEFAULT_GUI_FONT) };
-        // SAFETY: selecting a stock object into a live DC.
-        let previous = unsafe { SelectObject(dc, stock) };
-        (HFONT(stock.0), previous)
+        };
+        // SAFETY: `dc` is live and `font` was just created.
+        let previous = unsafe { SelectObject(dc, HGDIOBJ(font.0)) };
+        (font, previous)
     }
 
     /// Handle `WM_PAINT`, always pairing `BeginPaint`/`EndPaint`.
@@ -594,7 +403,7 @@ mod win {
             }
         };
 
-        let l = layout(w, h, dpi, buf.state_w, content);
+        let l = layout::layout(w, h, dpi, buf.state_w, content);
 
         // SAFETY: `buf` owns live GDI objects created above. Each `Selected`
         // guard restores and releases exactly the object it selected, so nothing
@@ -760,7 +569,7 @@ mod win {
                 return None;
             }
             let hinstance = instance()?;
-            let dpi = screen_dpi();
+            let dpi = layout::screen_dpi();
             // SAFETY: the class is registered above; the class name and window
             // name are static literals; no parent, menu, or param is used.
             let hwnd = unsafe {
@@ -816,7 +625,7 @@ mod win {
                     dpi: self.dpi,
                 });
             });
-            let (x, y) = place(w, h, anchor, scale(GAP, self.dpi));
+            let (x, y) = layout::place(w, h, anchor, scale(GAP, self.dpi));
             // SAFETY: `hwnd` is live; SWP_NOACTIVATE keeps the gesture gate
             // intact and SWP_NOZORDER leaves the existing topmost z-order.
             unsafe {
@@ -847,290 +656,7 @@ mod win {
     }
 
     #[cfg(test)]
-    mod tests {
-        use super::*;
-        use windows::Win32::Graphics::Gdi::GetPixel;
-        use windows::Win32::UI::WindowsAndMessaging::{
-            DispatchMessageW, GetWindowRect, IsWindowVisible, MSG, PM_REMOVE, PeekMessageW,
-        };
-
-        /// Regression: a window procedure that handles `WM_PAINT` without
-        /// validating the update region makes Windows re-post `WM_PAINT`
-        /// immediately and forever. That starves the message loop — the app
-        /// pegs a core, never reaches its own polling, and the tray, wheel and
-        /// menu all stop responding.
-        #[test]
-        fn window_does_not_flood_wm_paint() {
-            let Some(osd) = OsdOverlay::new() else {
-                panic!("OsdOverlay::new() returned None: window creation failed");
-            };
-            // Force a non-empty update region so the paint pairing is exercised
-            // even where creation alone left the window clean.
-            // SAFETY: invalidating the live window's own client area.
-            let _ = unsafe { InvalidateRect(Some(osd.hwnd), None, false) };
-
-            const LIMIT: u32 = 1000;
-            let mut msg = MSG::default();
-            let mut drained: u32 = 0;
-            // SAFETY: draining this thread's queue, bounded so a regression
-            // fails the test instead of hanging it.
-            unsafe {
-                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                    DispatchMessageW(&raw const msg);
-                    drained += 1;
-                    assert!(
-                        drained < LIMIT,
-                        "message queue flooded: {drained} messages without the update region being \
-                         validated (BeginPaint/EndPaint pairing broken)"
-                    );
-                }
-            }
-        }
-
-        /// Pixel evidence read back from one rendered card.
-        #[derive(Debug)]
-        struct Sample {
-            card: u32,
-            corner: u32,
-            fill_px: u32,
-            track_px: u32,
-            name_ink: u32,
-        }
-
-        /// Render `content` with `tokens` forced, then read the pixels back.
-        ///
-        /// The tokens are forced through the style cache so the assertions do
-        /// not depend on this machine's theme; the top-left pixel is sampled
-        /// because it lies outside the rounded corner and must stay keyed out.
-        fn sample(tokens: Palette, content: &OsdContent) -> Sample {
-            STYLE.with(|slot| slot.set(Some(tokens)));
-            let Some(mut osd) = OsdOverlay::new() else {
-                panic!("OsdOverlay::new() returned None: window creation failed");
-            };
-            // SAFETY: both metrics take no arguments.
-            let (sw, sh) =
-                unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
-            osd.show(content.clone(), Some((sw / 2, sh / 2, 24, 24)));
-
-            let dpi = osd.dpi;
-            let (w, _) = (scale(CARD_W, dpi), scale(CARD_H, dpi));
-            let bar_mid = scale(CARD_H - PAD, dpi) - scale(BAR_H, dpi) / 2;
-            let name_mid = scale(NAME_TOP, dpi) + scale(NAME_H, dpi) / 2;
-            let card_rgb = rgb(tokens.card).0 & 0x00FF_FFFF;
-            let fill_rgb = rgb(tokens.fill).0 & 0x00FF_FFFF;
-            let track_rgb = rgb(tokens.track).0 & 0x00FF_FFFF;
-            // SAFETY: `GetDC`/`ReleaseDC` balance on the live window and every
-            // `GetPixel` reads inside the client area computed above.
-            let sample = unsafe {
-                let dc = GetDC(Some(osd.hwnd));
-                let card = GetPixel(dc, w / 2, scale(2, dpi)).0 & 0x00FF_FFFF;
-                let corner = GetPixel(dc, 0, 0).0 & 0x00FF_FFFF;
-                let mut fill_px = 0u32;
-                let mut track_px = 0u32;
-                let mut name_ink = 0u32;
-                for x in scale(PAD, dpi)..(w - scale(PAD, dpi)) {
-                    let slider = GetPixel(dc, x, bar_mid).0 & 0x00FF_FFFF;
-                    if slider == fill_rgb {
-                        fill_px += 1;
-                    } else if slider == track_rgb {
-                        track_px += 1;
-                    }
-                    // Text is whatever differs from the card behind it, so the
-                    // check holds in either theme.
-                    if GetPixel(dc, x, name_mid).0 & 0x00FF_FFFF != card_rgb {
-                        name_ink += 1;
-                    }
-                }
-                ReleaseDC(Some(osd.hwnd), dc);
-                Sample {
-                    card,
-                    corner,
-                    fill_px,
-                    track_px,
-                    name_ink,
-                }
-            };
-            // Hide before returning so a failure cannot leave a card on screen.
-            osd.hide();
-            STYLE.with(|slot| slot.set(None));
-            sample
-        }
-
-        /// The card paints in the dark tokens, the corners stay keyed out, and
-        /// the slider and text are really drawn.
-        #[test]
-        fn dark_card_paints_tokens_and_keyed_corners() {
-            let tokens = palette(false, Some((0x00, 0x78, 0xD4)));
-            let s = sample(tokens, &named(62));
-            assert_eq!(s.card, rgb(tokens.card).0 & 0x00FF_FFFF, "card fill");
-            assert_eq!(
-                s.corner,
-                rgb(KEY_RGB).0 & 0x00FF_FFFF,
-                "corner outside the radius must stay keyed out"
-            );
-            assert!(s.fill_px > 0, "slider fill not painted");
-            assert!(s.track_px > 0, "slider track not painted");
-            assert!(s.name_ink > 0, "device-name text not painted");
-        }
-
-        /// The light tokens are the risky path: a light card over a dark
-        /// taskbar would show black corners if the key were not applied.
-        #[test]
-        fn light_card_paints_tokens_and_keyed_corners() {
-            let tokens = palette(true, Some((0x00, 0x78, 0xD4)));
-            let s = sample(tokens, &named(62));
-            assert_eq!(s.card, rgb(tokens.card).0 & 0x00FF_FFFF, "light card fill");
-            assert_eq!(
-                s.corner,
-                rgb(KEY_RGB).0 & 0x00FF_FFFF,
-                "corner outside the radius must stay keyed out"
-            );
-            assert!(s.fill_px > 0, "slider fill not painted");
-            assert!(s.track_px > 0, "slider track not painted");
-            assert!(s.name_ink > 0, "device-name text not painted");
-        }
-
-        /// Exercises the real window: creation, computed position, and
-        /// visibility. This is the layer the pure-formatting tests cannot
-        /// reach, and the one that decides whether the overlay appears at all.
-        #[test]
-        fn overlay_creates_and_shows_visible_on_screen() {
-            let Some(mut osd) = OsdOverlay::new() else {
-                panic!("OsdOverlay::new() returned None: window creation failed");
-            };
-            // SAFETY: both metrics take no arguments.
-            let (sw, sh) =
-                unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
-            // Anchor mid-screen so no clamp can push the card off the monitor.
-            let anchor = (sw / 2, sh / 2, 24, 24);
-            osd.show(named(62), Some(anchor));
-
-            let (w, h) = (scale(CARD_W, osd.dpi), scale(CARD_H, osd.dpi));
-            let expected = place(w, h, Some(anchor), scale(GAP, osd.dpi));
-            // SAFETY: `osd.hwnd` is a live window owned by `osd`.
-            let visible = unsafe { IsWindowVisible(osd.hwnd) }.as_bool();
-            let mut rect = RECT::default();
-            // SAFETY: plain out-parameter write on the live window.
-            let rect_ok = unsafe { GetWindowRect(osd.hwnd, &mut rect) }.is_ok();
-            // Hide before asserting so a failure cannot leave a card on screen.
-            osd.hide();
-
-            assert!(visible, "window not visible after show()");
-            assert!(rect_ok, "GetWindowRect failed");
-            assert_eq!(
-                (rect.left, rect.top),
-                expected,
-                "window not at the computed position"
-            );
-            assert_eq!(
-                (rect.right - rect.left, rect.bottom - rect.top),
-                (w, h),
-                "wrong window size"
-            );
-        }
-
-        fn named(percent: u32) -> OsdContent {
-            OsdContent {
-                device: "Speaker".into(),
-                state: format!("{percent}%"),
-                percent,
-                muted: false,
-            }
-        }
-
-        /// Bottom taskbar: the card sits above the icon (which is inside the
-        /// taskbar, below the work area) and is clamped so it cannot overflow
-        /// the right edge of the screen.
-        #[test]
-        fn fit_places_the_card_above_the_icon() {
-            let work = (0, 0, 1920, 1032);
-            let icon = (1800, 1040, 24, 24);
-            let (x, y) = fit(icon, 240, 64, GAP, work);
-            assert_eq!(x, 1920 - 240, "centred on the icon, then clamped");
-            assert_eq!(y, 1040 - 64 - GAP, "one gap above the icon");
-        }
-
-        /// Top taskbar: there is no room above the icon, so the card flips below
-        /// it — and the clamp then pulls it back inside the work area.
-        #[test]
-        fn fit_flips_below_when_the_taskbar_leaves_no_room_above() {
-            let work = (0, 48, 1920, 1080);
-            let icon = (100, 10, 24, 24);
-            assert_eq!(fit(icon, 240, 64, GAP, work), (0, 48));
-        }
-
-        /// Left taskbar: the card is pushed out of the taskbar strip entirely
-        /// instead of overlapping it.
-        #[test]
-        fn fit_clamps_out_of_a_left_taskbar() {
-            let work = (48, 0, 1920, 1080);
-            let icon = (10, 500, 24, 24);
-            assert_eq!(fit(icon, 240, 64, GAP, work), (48, 500 - 64 - GAP));
-        }
-
-        #[test]
-        fn layout_keeps_every_element_inside_the_card() {
-            let (w, h, dpi, state_w) = (scale(CARD_W, 96), scale(CARD_H, 96), 96, 24);
-            let content = named(72);
-            let l = layout(w, h, dpi, state_w, &content);
-            for r in [l.name, l.bar_track, l.bar_fill, l.thumb, l.state] {
-                assert!(
-                    r.left >= 0 && r.top >= 0 && r.right <= w && r.bottom <= h,
-                    "{r:?} escapes the card"
-                );
-            }
-            assert!(l.bar_track.left < l.bar_track.right, "empty track");
-            assert!(
-                l.bar_fill.right <= l.bar_track.right,
-                "fill overflows the track"
-            );
-            // The state text sits to the right of the bar, not on top of it.
-            assert!(l.state.left >= l.bar_track.right);
-            // The fill covers the requested share of the track (integer pixels).
-            let track = l.bar_track.right - l.bar_track.left;
-            let fill = l.bar_fill.right - l.bar_fill.left;
-            assert!(fill > 0 && fill < track, "fill {fill} of track {track}");
-            assert!((fill * 100 / track).abs_diff(72) <= 1);
-        }
-
-        /// The thumb rides the fill head and never overhangs the track, so it
-        /// cannot poke out of the card at either end of the range.
-        #[test]
-        fn layout_keeps_the_thumb_on_the_track() {
-            let (w, h, dpi, state_w) = (scale(CARD_W, 96), scale(CARD_H, 96), 96, 24);
-            let radius = scale(THUMB_D, dpi) / 2;
-            for percent in [0, 5, 50, 95, 100] {
-                let l = layout(w, h, dpi, state_w, &named(percent));
-                assert_eq!(l.thumb.right - l.thumb.left, radius * 2, "{percent}%");
-                assert_eq!(l.thumb.bottom - l.thumb.top, radius * 2, "{percent}%");
-                assert!(
-                    l.thumb.left >= l.bar_track.left && l.thumb.right <= l.bar_track.right,
-                    "{percent}%: thumb {:?} overhangs track {:?}",
-                    l.thumb,
-                    l.bar_track
-                );
-            }
-        }
-
-        #[test]
-        fn layout_centres_the_bar_without_a_device_name() {
-            let (w, h) = (scale(CARD_W, 96), scale(CARD_H, 96));
-            let with_name = layout(w, h, 96, 24, &named(50));
-            let mut no_name = named(50);
-            no_name.device = String::new();
-            let without = layout(w, h, 96, 24, &no_name);
-            assert_eq!(with_name.bar_track.bottom, CARD_H - PAD);
-            assert_eq!(without.bar_track.bottom, CARD_H / 2 + BAR_H / 2);
-        }
-
-        #[test]
-        fn layout_zero_percent_draws_no_fill() {
-            let (w, h) = (scale(CARD_W, 96), scale(CARD_H, 96));
-            let l = layout(w, h, 96, 24, &named(0));
-            assert_eq!(l.bar_fill.left, l.bar_fill.right, "0% must fill nothing");
-            assert!(l.bar_track.left < l.bar_track.right, "track still drawn");
-        }
-    }
+    mod tests;
 }
 
 #[cfg(windows)]

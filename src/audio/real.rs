@@ -86,7 +86,7 @@ unsafe fn set_default_endpoint_raw(device_id: &str, role: i32) -> windows::core:
         *mut *mut std::ffi::c_void,
     ) -> HRESULT;
     type ReleaseFn = unsafe extern "system" fn(*mut std::ffi::c_void) -> u32;
-    let wide: Vec<u16> = device_id.encode_utf16().chain(std::iter::once(0)).collect();
+    let wide: Vec<u16> = crate::platform::wide::wide_z(device_id);
     let mut last_err: Option<windows::core::Error> = None;
     for &(clsid, iid, primary_off) in CANDIDATES {
         // SAFETY: CoCreateInstance with valid CLSID, no aggregation, CLSCTX_ALL.

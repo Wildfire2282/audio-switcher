@@ -117,7 +117,7 @@ fn working_dir_wide() -> Vec<u16> {
         .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| r"C:\".to_string());
-    format!("{dir}\0").encode_utf16().collect()
+    super::wide::wide_z(&dir)
 }
 
 #[cfg(windows)]
@@ -125,7 +125,7 @@ fn wide_nul(s: &str) -> Result<Vec<u16>, ShellError> {
     if s.contains('\0') {
         return Err(ShellError::InteriorNul);
     }
-    Ok(s.encode_utf16().chain(std::iter::once(0)).collect())
+    Ok(super::wide::wide_z(s))
 }
 
 /// Open a validated external URL. Failures surface a dialog (never swallowed).
