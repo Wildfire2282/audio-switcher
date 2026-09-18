@@ -3,7 +3,7 @@
 //! Libraries never install a subscriber; this helper only exists so the
 //! binary entry stays at guards → `App::run`. The install site is `main`.
 //!
-//! Level: `WARN` and above by default, overridden by the `AUDIO_SWITCHER_LOG`
+//! Level: `INFO` and above by default, overridden by the `AUDIO_SWITCHER_LOG`
 //! environment variable (`error` / `warn` / `info` / `debug` / `trace`). The
 //! variable is parsed here rather than through `tracing-subscriber`'s
 //! `env-filter` feature, which would pull `regex` and `matchers` into a
