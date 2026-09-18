@@ -1,7 +1,8 @@
-//! Windows low-level mouse wheel hook, encapsulated.
+//! Windows low-level mouse hook, encapsulated.
 //!
 //! The hook is installed lazily via [`WheelHook::install`] and automatically
-//! removed on drop. Global atomics communicate wheel events to the main loop.
+//! removed on drop. Global atomics communicate wheel events and button presses
+//! to the main loop.
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
@@ -9,13 +10,40 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 static WHEEL_DELTA: AtomicI32 = AtomicI32::new(0);
 /// Whether a wheel event is pending consumption.
 static WHEEL_PENDING: AtomicBool = AtomicBool::new(false);
+/// Whether a mouse button went down since the last poll.
+#[cfg(windows)]
+static CLICKED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(windows)]
 static HOOK_HANDLE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 #[cfg(windows)]
 static HOOK_REFCOUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// Low-level mouse hook procedure: harvests wheel deltas, forwards everything.
+/// Whether `msg` is a mouse button going down.
+///
+/// Client and non-client downs both count: a click on a title bar, border or
+/// scrollbar is still a click. Button ups, moves and the wheel are not.
+#[cfg(windows)]
+fn is_button_down(msg: u32) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_NCLBUTTONDOWN, WM_NCMBUTTONDOWN, WM_NCRBUTTONDOWN,
+        WM_NCXBUTTONDOWN, WM_RBUTTONDOWN, WM_XBUTTONDOWN,
+    };
+    matches!(
+        msg,
+        WM_LBUTTONDOWN
+            | WM_RBUTTONDOWN
+            | WM_MBUTTONDOWN
+            | WM_XBUTTONDOWN
+            | WM_NCLBUTTONDOWN
+            | WM_NCRBUTTONDOWN
+            | WM_NCMBUTTONDOWN
+            | WM_NCXBUTTONDOWN
+    )
+}
+
+/// Low-level mouse hook procedure: harvests wheel deltas and button presses,
+/// forwards everything.
 ///
 /// # Safety
 ///
@@ -29,14 +57,22 @@ unsafe extern "system" fn hook_proc(
     l_param: windows::Win32::Foundation::LPARAM,
 ) -> windows::Win32::Foundation::LRESULT {
     use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, MSLLHOOKSTRUCT, WM_MOUSEWHEEL};
-    if n_code >= 0 && w_param.0 as u32 == WM_MOUSEWHEEL {
-        // SAFETY: per Win32 contract l_param points to MSLLHOOKSTRUCT
-        let info = unsafe { &*(l_param.0 as *const MSLLHOOKSTRUCT) };
-        #[allow(clippy::cast_possible_wrap, clippy::cast_lossless)]
-        let delta = (info.mouseData >> 16) as u16 as i16 as i32;
-        // Release ordering pairs with Acquire in the consumer (take_wheel_event).
-        WHEEL_DELTA.fetch_add(delta, Ordering::AcqRel);
-        WHEEL_PENDING.store(true, Ordering::Release);
+    if n_code >= 0 {
+        let msg = w_param.0 as u32;
+        if msg == WM_MOUSEWHEEL {
+            // SAFETY: per Win32 contract l_param points to MSLLHOOKSTRUCT
+            let info = unsafe { &*(l_param.0 as *const MSLLHOOKSTRUCT) };
+            #[allow(clippy::cast_possible_wrap, clippy::cast_lossless)]
+            let delta = (info.mouseData >> 16) as u16 as i16 as i32;
+            // Release ordering pairs with Acquire in the consumer (take_wheel_event).
+            WHEEL_DELTA.fetch_add(delta, Ordering::AcqRel);
+            WHEEL_PENDING.store(true, Ordering::Release);
+        } else if is_button_down(msg) {
+            // Only "a click happened" is needed to dismiss the overlay, so one
+            // flag serves every button. Release ordering pairs with Acquire in
+            // the consumer (take_click).
+            CLICKED.store(true, Ordering::Release);
+        }
     }
     // SAFETY: CallNextHookEx is always safe to forward.
     unsafe { CallNextHookEx(None, n_code, w_param, l_param) }
@@ -151,6 +187,20 @@ pub(crate) fn take_wheel_event() -> (bool, i32) {
     (pending || delta != 0, delta)
 }
 
+/// Atomically take the pending click flag: did a mouse button go down?
+///
+/// One flag covers every button — the overlay only needs "a click happened".
+#[cfg(windows)]
+pub(crate) fn take_click() -> bool {
+    CLICKED.swap(false, Ordering::AcqRel)
+}
+
+#[cfg(not(windows))]
+/// Non-Windows stub.
+pub(crate) fn take_click() -> bool {
+    false
+}
+
 /// Whether the cursor is over the tray icon's rect (with padding).
 ///
 /// Returns `None` when the tray rect is unavailable.
@@ -184,6 +234,42 @@ pub(crate) fn cursor_over_tray(wrapper: &crate::ui::tray::TrayWrapper) -> Option
 /// Non-Windows stub.
 pub(crate) fn cursor_over_tray(_wrapper: &crate::ui::tray::TrayWrapper) -> Option<bool> {
     Some(false)
+}
+
+#[cfg(all(test, windows))]
+mod click_tests {
+    use super::is_button_down;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+        WM_NCLBUTTONDOWN, WM_NCMBUTTONDOWN, WM_NCRBUTTONDOWN, WM_NCXBUTTONDOWN, WM_RBUTTONDOWN,
+        WM_RBUTTONUP, WM_XBUTTONDOWN,
+    };
+
+    #[test]
+    fn every_button_down_counts_as_a_click() {
+        for msg in [
+            WM_LBUTTONDOWN,
+            WM_RBUTTONDOWN,
+            WM_MBUTTONDOWN,
+            WM_XBUTTONDOWN,
+            WM_NCLBUTTONDOWN,
+            WM_NCRBUTTONDOWN,
+            WM_NCMBUTTONDOWN,
+            WM_NCXBUTTONDOWN,
+        ] {
+            assert!(is_button_down(msg), "{msg:#06x} must dismiss the overlay");
+        }
+    }
+
+    #[test]
+    fn ups_moves_and_wheel_are_not_clicks() {
+        for msg in [WM_LBUTTONUP, WM_RBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL] {
+            assert!(
+                !is_button_down(msg),
+                "{msg:#06x} must not dismiss the overlay"
+            );
+        }
+    }
 }
 
 #[cfg(all(test, windows))]

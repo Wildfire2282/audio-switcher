@@ -679,6 +679,23 @@ impl<B: AudioBackend> App<B> {
             self.handle_hotkey(action);
         }
     }
+    /// Dismiss the overlay on any mouse button press.
+    ///
+    /// Runs before the tray and menu handlers, so the middle-click that toggles
+    /// mute clears the stale overlay first and the mute feedback that follows
+    /// still shows.
+    fn poll_click(&mut self) {
+        if hook::take_click() {
+            self.hide_osd();
+        }
+    }
+    /// Hide the overlay now and stop its deadline.
+    fn hide_osd(&mut self) {
+        self.osd_deadline = None;
+        if let Some(osd) = &self.osd {
+            osd.hide();
+        }
+    }
     /// Hide the overlay once its deadline passes.
     ///
     /// The deadline is loop policy rather than a `SetTimer`: `wait_timeout`
@@ -688,12 +705,8 @@ impl<B: AudioBackend> App<B> {
         let Some(deadline) = self.osd_deadline else {
             return;
         };
-        if Instant::now() < deadline {
-            return;
-        }
-        self.osd_deadline = None;
-        if let Some(osd) = &self.osd {
-            osd.hide();
+        if Instant::now() >= deadline {
+            self.hide_osd();
         }
     }
     /// Wait timeout for this iteration.
@@ -718,6 +731,7 @@ impl<B: AudioBackend> App<B> {
                 break;
             }
             self.maybe_install_hook();
+            self.poll_click();
             self.poll_tray();
             self.poll_menu();
             if self.should_exit {
