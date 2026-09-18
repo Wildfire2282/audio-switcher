@@ -10,12 +10,45 @@
 //! - `ui` — tray UI
 //! - `app` — runtime
 //!
-//! Engineering standard: `docs/unified-scheme.md` (generic tray-app development standard).
+//! Layering: `platform` owns every Win32 call, `ui` turns state into text and
+//! colour, `app` owns loop policy. Neither `ui` nor `app` calls Win32 directly,
+//! and `platform` never invents UI text a caller did not hand it.
+//!
+//! # Invariants
+//!
+//! Cheap to break and expensive to notice; each of these has already cost a bug:
+//! - A window procedure handling `WM_PAINT` must pair `BeginPaint`/`EndPaint` on
+//!   every path. Skipping them leaves the update region unvalidated, so Windows
+//!   re-posts `WM_PAINT` forever and starves the entire message loop.
+//! - The volume overlay must never activate and must stay click-through
+//!   (`WS_EX_NOACTIVATE` / `WS_EX_TRANSPARENT`): activation steals the tray
+//!   icon's hover state, and that hover is what gates wheel volume.
+//! - The overlay mirrors the shell's own menu styling rather than the Windows 11
+//!   XAML flyouts, and carries no tooltip — the shell would draw that tooltip
+//!   exactly where the overlay appears. See `platform::osd`.
+//! - The tray icon is never given a tooltip, and `TOOL_ID` is the single source
+//!   for the mutex name, the config/log directories, and the autostart name.
+//! - `app::App`'s volume/mute/device mirror is authoritative for our own writes
+//!   and is resynced from the backend on every external change; a write that is
+//!   read back instead would put an endpoint round-trip on the wheel's hot path.
+//! - Encode Win32 strings through `platform::wide`: the NUL terminator is a
+//!   memory-safety detail, not a formatting one.
+//!
+//! # Verification
+//!
+//! A green `cargo test` does not clear a UI change. The overlay's worst failures
+//! are invisible to unit tests: they pass while the app is unusable. Confirm the
+//! message loop still runs (idle CPU near zero, the tray menu opening) before
+//! believing an overlay change, and prefer runtime evidence — the render tests
+//! read the painted pixels back precisely because "it compiles and the tests
+//! pass" was once true of a build that pegged a core and ignored the wheel.
+//!
+//! The gate is `scripts/smoke.ps1` (build, test, fmt, `clippy -D warnings`).
 #![warn(missing_docs)]
 #![warn(unsafe_op_in_unsafe_fn)]
 // Baseline-inherent duplicates (single-instance 0.3.3 pulls thiserror 1/syn 1;
 // tray-icon's tree pulls old unix-gated nix/memoffset/bitflags/miniz_oxide):
-// locked by §1, upgrades by separate decision. Re-check on every baseline
+// locked; upgrades need a separate decision. Re-check on every baseline
 // bump with `cargo tree -i <crate>`; new direct-dep duplicates stay denied.
 #![allow(clippy::multiple_crate_versions)]
 // `pub` below is the minimum the `main` binary and doctests need; everything

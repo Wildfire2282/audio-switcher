@@ -17,7 +17,7 @@
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
-$budget = 800KB   # scheme §6 P0 single-exe budget (never loosen silently)
+$budget = 800KB   # single-exe size budget (never loosen silently)
 
 Push-Location $root
 try {
@@ -61,7 +61,7 @@ try {
     Write-Host "[5] stage dist (current release only)"
     # Budget gate runs before staging: an oversized image must never reach dist/.
     $size = (Get-Item $exe).Length
-    if ($size -gt $budget) { throw ("size {0:N0} exceeds the {1:N0}-byte budget (scheme §6)" -f $size, $budget) }
+    if ($size -gt $budget) { throw ("size {0:N0} exceeds the {1:N0}-byte budget" -f $size, $budget) }
 
     $dist = Join-Path $root "dist"
     New-Item -ItemType Directory -Force -Path $dist | Out-Null

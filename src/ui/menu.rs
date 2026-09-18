@@ -1,6 +1,6 @@
 //! Tray context menu builder.
 //!
-//! Fixed shape (§5.1): grayed `{DisplayName} v{ver}` title → separator → feature
+//! Fixed shape: grayed `{DisplayName} v{ver}` title → separator → feature
 //! group (devices, toggles, system tools incl. hotkey-settings entry) →
 //! separator → fixed tail (refresh → autostart → language submenu → about →
 //! exit always last, no separators inside the tail). Hotkeys have no submenu:
