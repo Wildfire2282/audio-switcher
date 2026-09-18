@@ -1,4 +1,10 @@
 #!/usr/bin/env pwsh
+param(
+    # Skip the ignored integration tests: they move the real default recording
+    # device and master volume. CI and the commit hook run with this switch, so
+    # an unattended gate can never touch the machine's audio.
+    [switch]$GateOnly
+)
 $ErrorActionPreference = "Stop"
 Write-Host "== Audio Switcher Smoke =="
 
@@ -13,9 +19,13 @@ cargo test
 if ($LASTEXITCODE -ne 0) { throw "tests failed" }
 
 # 3. ignored integration
-Write-Host "[3] cargo test -- --ignored (integration)"
-cargo test -- --ignored
-if ($LASTEXITCODE -ne 0) { Write-Host "integration warnings" }
+if ($GateOnly) {
+    Write-Host "[3] skipped (-GateOnly): the ignored tests move real audio devices"
+} else {
+    Write-Host "[3] cargo test -- --ignored (integration)"
+    cargo test -- --ignored
+    if ($LASTEXITCODE -ne 0) { Write-Host "integration warnings" }
+}
 
 # 4. config defaults check via cargo test already covers
 Write-Host "[4] config defaults verified via tests"
