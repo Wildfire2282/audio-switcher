@@ -1,3 +1,9 @@
+//! In-memory `AudioBackend` used by tests and by `App` construction tests.
+//!
+//! Deliberately dumb: device state lives in a `Vec` and the error injection
+//! switch (`fail_next`) exists so callers can assert the failure paths without
+//! hardware. It never touches WASAPI, which is why it is the only backend that
+//! builds on every platform.
 use std::time::{Duration, Instant};
 
 use crate::config::{AppConfig, clamp_volume};

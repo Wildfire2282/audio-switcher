@@ -13,6 +13,24 @@
 //! Layering: `platform` owns every Win32 call, `ui` turns state into text and
 //! colour, `app` owns loop policy. Neither `ui` nor `app` calls Win32 directly,
 //! and `platform` never invents UI text a caller did not hand it.
+//! `tests/architecture.rs` enforces this instead of trusting a reader.
+//!
+//! # Where to look
+//!
+//! Task → the files that decide it; everything else is context you can skip.
+//! Unit tests live in a sibling `tests.rs` next to the module they test, so a
+//! production read never drags them along.
+//! - wheel volume, hover gate, click dismissal → `platform::mouse_hook`,
+//!   `app::poll::{poll_wheel, poll_click}`, `app::action::show_osd`
+//! - the runtime: `App` state and the loop → `app` (`mod.rs`), per-frame pumps
+//!   → `app::poll`, user actions → `app::action`, startup wiring → `app::setup`
+//! - overlay: does it appear, where → `platform::osd`; what it looks like →
+//!   `platform::osd::win::{draw, layout}`, `ui::osd`, `platform::theme`
+//! - tray icon, context menu, menu ids → `ui::tray`, `ui::menu`, `app::handler`
+//! - audio IO: devices, volume, COM callbacks → `audio::wasapi::{notify, policy}`
+//! - config fields, migration, paths → `config`
+//! - global hotkeys → `platform::hotkey`
+//! - autostart, dialogs, single instance, logging → `platform`
 //!
 //! # Invariants
 //!
@@ -31,7 +49,7 @@
 //! - `app::App`'s volume/mute/device mirror is authoritative for our own writes
 //!   and is resynced from the backend on every external change; a write that is
 //!   read back instead would put an endpoint round-trip on the wheel's hot path.
-//! - Encode Win32 strings through `platform::wide`: the NUL terminator is a
+//! - Encode Win32 strings through `platform::utf16`: the NUL terminator is a
 //!   memory-safety detail, not a formatting one.
 //!
 //! # Verification

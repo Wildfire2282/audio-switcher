@@ -49,14 +49,15 @@ pub(crate) fn pump_messages() {
 /// could not help — it runs only after the wake it would be trying to cause.
 pub(crate) fn wait_for_input(timeout_ms: u32) {
     #[cfg(windows)]
-    unsafe {
+    {
         use windows::Win32::UI::WindowsAndMessaging::{
             MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, QS_ALLINPUT,
         };
         // SAFETY: MsgWaitForMultipleObjectsEx with an empty handle slice and
         // QS_ALLINPUT is safe to call on the UI thread.
-        let _ =
-            MsgWaitForMultipleObjectsEx(Some(&[]), timeout_ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        let _ = unsafe {
+            MsgWaitForMultipleObjectsEx(Some(&[]), timeout_ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE)
+        };
     }
     #[cfg(not(windows))]
     std::thread::sleep(std::time::Duration::from_millis(u64::from(timeout_ms)));
@@ -65,9 +66,9 @@ pub(crate) fn wait_for_input(timeout_ms: u32) {
 /// Post `Quit`, ending the message loop.
 pub(crate) fn quit() {
     #[cfg(windows)]
-    unsafe {
+    {
         use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
         // SAFETY: Posts quit to the calling thread's queue; always safe.
-        PostQuitMessage(0);
+        unsafe { PostQuitMessage(0) };
     }
 }

@@ -115,9 +115,8 @@ fn shell_execute(target_w: &[u16], params_w: Option<&[u16]>) -> Result<(), Shell
 fn working_dir_wide() -> Vec<u16> {
     let dir = crate::platform::autostart::get_exe_path()
         .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| r"C:\".to_string());
-    super::wide::wide_z(&dir)
+        .map_or_else(|| r"C:\".to_string(), |p| p.to_string_lossy().to_string());
+    super::utf16::wide_z(&dir)
 }
 
 #[cfg(windows)]
@@ -125,7 +124,7 @@ fn wide_nul(s: &str) -> Result<Vec<u16>, ShellError> {
     if s.contains('\0') {
         return Err(ShellError::InteriorNul);
     }
-    Ok(super::wide::wide_z(s))
+    Ok(super::utf16::wide_z(s))
 }
 
 /// Open a validated external URL. Failures surface a dialog (never swallowed).
