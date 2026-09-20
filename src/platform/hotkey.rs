@@ -48,15 +48,12 @@ static PENDING: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new
 /// would otherwise alias whichever action took the slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HotkeyAction {
-    /// Toggle the default output device's mute.
     Mute,
-    /// Raise the master volume one step.
     VolumeUp,
-    /// Lower the master volume one step.
     VolumeDown,
-    /// Switch to the next output device (wraps at the end).
+    /// Switch to the next output device. Wraps at the end.
     NextDevice,
-    /// Switch to the previous output device (wraps at the start).
+    /// Switch to the previous output device. Wraps at the start.
     PrevDevice,
 }
 
@@ -382,7 +379,6 @@ pub fn register_all(bindings: &[(HotkeyAction, Hotkey)]) -> Result<(), HotkeyErr
     }
 }
 
-/// Non-Windows stub (registration is a Win32 facility).
 #[cfg(not(windows))]
 pub fn register_all(_bindings: &[(HotkeyAction, Hotkey)]) -> Result<(), HotkeyError> {
     Ok(())
@@ -402,7 +398,6 @@ pub fn unregister_all() {
     }
 }
 
-/// Non-Windows stub.
 #[cfg(not(windows))]
 pub fn unregister_all() {}
 

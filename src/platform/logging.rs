@@ -42,7 +42,6 @@ pub fn init() {
         // File sink only: `windows_subsystem = "windows"` detaches stdio, so
         // a console layer would be invisible; the file is the record.
         let subscriber = tracing_subscriber::fmt()
-            .with_ansi(false)
             .with_max_level(max_level())
             .with_writer(std::sync::Mutex::new(file))
             .finish();

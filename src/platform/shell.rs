@@ -14,7 +14,6 @@ use thiserror::Error;
 /// Hosts allowed for external navigation (publishing domains only).
 pub const URL_ALLOWLIST: &[&str] = &["github.com"];
 
-/// Validation failure for [`Url`].
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum UrlError {
     /// Scheme is not `https`.
@@ -35,7 +34,6 @@ pub enum UrlError {
 pub struct Url(String);
 
 impl Url {
-    /// The validated URL string.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -73,7 +71,6 @@ pub enum ShellError {
     /// `ShellExecuteW` returned a value `<= 32`.
     #[error("ShellExecuteW failed for {target} (code {code})")]
     Execute {
-        /// Target that was launched.
         target: String,
         /// Raw `ShellExecuteW` return code.
         code: usize,
@@ -81,11 +78,15 @@ pub enum ShellError {
 }
 
 #[cfg(windows)]
-fn shell_execute(target_w: &[u16], params_w: Option<&[u16]>) -> Result<(), ShellError> {
+fn shell_execute_with_verb(
+    verb: &str,
+    target_w: &[u16],
+    params_w: Option<&[u16]>,
+) -> Result<(), ShellError> {
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
     use windows::core::PCWSTR;
-    let op: Vec<u16> = "open\0".encode_utf16().collect();
+    let op: Vec<u16> = verb.encode_utf16().chain(std::iter::once(0)).collect();
     let dir_w = working_dir_wide();
     // SAFETY: ShellExecuteW with null-terminated buffers alive through the call.
     unsafe {
@@ -107,6 +108,36 @@ fn shell_execute(target_w: &[u16], params_w: Option<&[u16]>) -> Result<(), Shell
             Ok(())
         }
     }
+}
+
+#[cfg(windows)]
+fn shell_execute(target_w: &[u16], params_w: Option<&[u16]>) -> Result<(), ShellError> {
+    shell_execute_with_verb("open", target_w, params_w)
+}
+
+/// Launch `target` through the `runas` verb to obtain an elevated child.
+///
+/// Windows raises one consent prompt unless this process already runs elevated.
+/// The call blocks until that prompt is answered, so callers stay off the
+/// message loop; the child itself is *not* waited for. A return code `<= 32` is
+/// the failure channel (a declined prompt included).
+///
+/// # Errors
+///
+/// [`ShellError::Execute`] with the raw `ShellExecuteW` code.
+#[cfg(windows)]
+pub(crate) fn execute_runas(target_w: &[u16], params_w: &[u16]) -> Result<(), ShellError> {
+    shell_execute_with_verb("runas", target_w, Some(params_w))
+}
+
+/// Non-Windows stub: elevation has no equivalent here.
+#[cfg(not(windows))]
+pub(crate) fn execute_runas(target_w: &[u16], params_w: &[u16]) -> Result<(), ShellError> {
+    let _ = params_w;
+    Err(ShellError::Execute {
+        target: String::from_utf16_lossy(target_w),
+        code: 0,
+    })
 }
 
 /// Explicit working directory for `ShellExecuteW`: the exe parent, falling
@@ -177,17 +208,14 @@ pub(crate) fn open_volume_mixer(err_msg: &str) {
 pub(crate) fn open_sound_settings(err_msg: &str) {
     #[cfg(windows)]
     {
-        match (wide_nul("control"), wide_nul("mmsys.cpl")) {
-            (Ok(target), Ok(params)) => {
-                if let Err(e) = shell_execute(&target, Some(&params)) {
-                    tracing::warn!("open_sound_settings failed: {e}");
-                    crate::platform::dialog::show_msgbox(err_msg);
-                }
-            }
-            _ => {
-                tracing::warn!("open_sound_settings validation failed");
+        if let (Ok(target), Ok(params)) = (wide_nul("control"), wide_nul("mmsys.cpl")) {
+            if let Err(e) = shell_execute(&target, Some(&params)) {
+                tracing::warn!("open_sound_settings failed: {e}");
                 crate::platform::dialog::show_msgbox(err_msg);
             }
+        } else {
+            tracing::warn!("open_sound_settings validation failed");
+            crate::platform::dialog::show_msgbox(err_msg);
         }
     }
     #[cfg(not(windows))]

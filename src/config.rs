@@ -12,13 +12,15 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::LazyLock;
 
+use crate::platform::autostart::AutostartMode;
 use crate::platform::hotkey::{Hotkey, HotkeyAction};
 
-/// Current config schema version. v2 migrates the v1 `Zh` default to
-/// `System` (v1 could not distinguish an explicit `zh` choice from the old
-/// default, so explicit `zh` users re-pick once). v3 adds the opt-in
-/// `hotkeys` object (absent in older files → every hotkey off).
-const CURRENT_VERSION: u32 = 3;
+/// Current config schema version. v2 migrates the v1 `Zh` default to `System`
+/// (v1 could not distinguish an explicit `zh` choice from the old default, so
+/// explicit `zh` users re-pick once). v3 adds the opt-in `hotkeys` object (absent
+/// in older files → every hotkey off). v4 replaces the `autostart` boolean with
+/// the three-way `autostart_mode`.
+const CURRENT_VERSION: u32 = 4;
 
 /// Legacy (v1, PascalCase) config filename for one-time import.
 const LEGACY_DIR_NAME: &str = "AudioSwitcher";
@@ -26,21 +28,17 @@ const LEGACY_DIR_NAME: &str = "AudioSwitcher";
 /// Cached config path — computed once per process.
 static CONFIG_PATH_CACHE: LazyLock<(PathBuf, bool)> = LazyLock::new(resolve_config_path);
 
-// ---------------------------------------------------------------------------
-// Lang
-// ---------------------------------------------------------------------------
-
-/// UI language. `System` (the default) follows the OS locale once at
-/// startup; live re-resolution is deferred (no locale listener is installed).
+/// UI language. `System` (the default) follows the OS locale once at startup;
+/// live re-resolution is deferred (no locale listener is installed).
+///
+/// Variant names are the documentation; `Zh` is Simplified only.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Lang {
-    /// Follow the system locale.
     #[default]
     System,
-    /// Chinese (Simplified).
     Zh,
-    /// English.
     En,
 }
 
@@ -131,10 +129,6 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Hotkeys
-// ---------------------------------------------------------------------------
-
 /// Global-hotkey opt-ins, one combination string per [`HotkeyAction`].
 ///
 /// Combinations are stored in canonical form (`"Ctrl+Alt+M"`) so `config.json`
@@ -148,18 +142,15 @@ where
 /// use audio_switcher::config::Hotkeys;
 /// assert_eq!(Hotkeys::default().mute, None);
 /// ```
+// Field names are the documentation; `get`/`set` map them to actions.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Hotkeys {
-    /// Toggle the default output device's mute.
     pub mute: Option<String>,
-    /// Raise the master volume one step.
     pub volume_up: Option<String>,
-    /// Lower the master volume one step.
     pub volume_down: Option<String>,
-    /// Switch to the next output device.
     pub next_device: Option<String>,
-    /// Switch to the previous output device.
     pub prev_device: Option<String>,
 }
 
@@ -213,10 +204,6 @@ impl Hotkeys {
     }
 }
 
-// ---------------------------------------------------------------------------
-// AppConfig
-// ---------------------------------------------------------------------------
-
 /// Persisted application configuration.
 ///
 /// Unknown fields are rejected (`deny_unknown_fields`): a typo must reset
@@ -230,19 +217,19 @@ impl Hotkeys {
 /// assert_eq!(cfg.lang, Lang::System);
 /// assert_eq!(cfg.volume_limit, 25);
 /// ```
+// Only fields whose meaning is not already in their name carry a doc line.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
-    /// Config schema version for migrations.
+    /// Schema version driving `migrate`.
     #[serde(default = "default_version")]
     pub version: u32,
-    /// UI language mode.
     #[serde(default = "default_lang")]
     pub lang: Lang,
-    /// Whether volume limiting is enabled.
     #[serde(default = "default_volume_limit_enabled")]
     pub volume_limit_enabled: bool,
-    /// Maximum volume percent when limiting is enabled (1..=100).
+    /// `1..=100`.
     #[serde(
         default = "default_volume_limit",
         deserialize_with = "deserialize_volume_limit",
@@ -250,10 +237,13 @@ pub struct AppConfig {
         alias = "VolumeLimit"
     )]
     pub volume_limit: u32,
-    /// Whether to register for auto-launch at login.
-    #[serde(default = "default_autostart")]
-    pub autostart: bool,
-    /// Global hotkey bindings; every action is off unless a combo is set.
+    #[serde(default = "default_autostart_mode")]
+    pub autostart_mode: AutostartMode,
+    /// Read only to migrate a v3 file into [`Self::autostart_mode`]; never
+    /// written back.
+    #[serde(default, skip_serializing, rename = "autostart")]
+    pub legacy_autostart: Option<bool>,
+    /// One combination per action; all off unless set.
     #[serde(default)]
     pub hotkeys: Hotkeys,
 }
@@ -270,8 +260,8 @@ fn default_volume_limit_enabled() -> bool {
 fn default_volume_limit() -> u32 {
     25
 }
-fn default_autostart() -> bool {
-    true
+fn default_autostart_mode() -> AutostartMode {
+    AutostartMode::User
 }
 
 impl Default for AppConfig {
@@ -281,7 +271,8 @@ impl Default for AppConfig {
             lang: default_lang(),
             volume_limit_enabled: default_volume_limit_enabled(),
             volume_limit: default_volume_limit(),
-            autostart: default_autostart(),
+            autostart_mode: default_autostart_mode(),
+            legacy_autostart: None,
             hotkeys: Hotkeys::default(),
         }
     }
@@ -297,7 +288,7 @@ pub const CONFIG_COMMENT_HEADER: &str = "// AudioSwitcher config — edit, save,
     // Location / 位置: %APPDATA%\\audio-switcher\\config.json\n\
     // Language / 语言: \"system\" (follow OS / 跟随系统), \"zh\", \"en\".\n\
     // Volume limit / 音量上限: \"volume_limit_enabled\" true/false, \"volume_limit\" 1-100.\n\
-    // Autostart / 开机自启: \"autostart\" true/false.\n\
+    // Autostart / 开机自启: \"autostart_mode\" = \"off\" | \"user\" (Run value / 注册表启动) | \"admin\" (elevated logon task / 管理员权限登录任务).\n\
     //\n\
     // Hotkeys / 快捷键 (all unbound by default / 默认无绑定):\n\
     //   Each action takes a combination string; null disables it.\n\
@@ -508,7 +499,8 @@ impl AppConfig {
     }
 
     /// Migrate older schemas: bump the version, clamp the limit, move the v1
-    /// `Zh` default to `System`, and canonicalize the hotkey combos.
+    /// `Zh` default to `System`, fold the v3 autostart boolean into
+    /// `autostart_mode`, and canonicalize the hotkey combos.
     fn migrate(mut cfg: Self) -> Self {
         // Scope to v1: that schema could not tell an explicit `zh` choice
         // apart from its own default, so its `zh` re-picks once. From v2 on,
@@ -516,6 +508,18 @@ impl AppConfig {
         if cfg.version < 2 && cfg.lang == Lang::Zh {
             cfg.lang = Lang::System;
         }
+        // v3 had a bare boolean whose default was `true`; it wins over the new
+        // field's default for any file older than v4.
+        if cfg.version < 4 {
+            if let Some(enabled) = cfg.legacy_autostart {
+                cfg.autostart_mode = if enabled {
+                    AutostartMode::User
+                } else {
+                    AutostartMode::Off
+                };
+            }
+        }
+        cfg.legacy_autostart = None;
         cfg.version = CURRENT_VERSION;
         if !(1..=100).contains(&cfg.volume_limit) {
             cfg.volume_limit = default_volume_limit();
@@ -553,23 +557,9 @@ impl AppConfig {
         def
     }
 
-    /// Non-blocking save; returns a handle that can be joined in tests.
-    ///
-    /// Fire-and-forget callers may drop the handle, but the write may be lost
-    /// if the process exits before the thread completes. Prefer joining the
-    /// handle at exit or using [`Self::save_to`] synchronously for critical saves.
-    // Dropping the handle is a supported "fire and forget" and the doc above
-    // states what that costs, so the return value is not worth flagging.
-    #[allow(clippy::must_use_candidate)]
-    pub fn save(&self) -> std::thread::JoinHandle<std::io::Result<()>> {
-        let cfg = self.clone();
-        let path = Self::config_path();
-        std::thread::spawn(move || cfg.save_to(&path))
-    }
-
     /// Synchronous atomic save: write to a unique temporary file alongside the
     /// target then rename. The unique suffix avoids races between concurrent
-    /// `save()` callers. Warns when writing to the degraded temp fallback.
+    /// callers. Warns when writing to the degraded temp fallback.
     /// The file is JSONC: [`CONFIG_COMMENT_HEADER`] is written above the JSON
     /// body so users learn the manual hotkey format in place.
     ///

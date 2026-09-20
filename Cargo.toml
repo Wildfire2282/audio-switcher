@@ -26,7 +26,10 @@ tracing = "0.1"
 # tracing-subscriber lives here (not dev-deps): the release binary file sink
 # links it at runtime; dev-deps do not link into binaries. Sync via std only;
 # all Windows API surface resolves via the `windows` crate.
-tracing-subscriber = { version = "0.3", features = ["fmt"] }
+# `default-features = false`: `ansi`, `tracing-log` and `smallvec` are unused
+# here (the sink writes plain text to a file) and only inflate a single-file
+# binary with a hard size budget.
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 [dependencies.windows]
 version = "0.62.2"
 features = [
@@ -92,7 +95,11 @@ opt-level = "z"
 lto = "fat"
 codegen-units = 1
 strip = true
-panic = "unwind"
+# Nothing here uses `catch_unwind`, so there is nothing to unwind for: the
+# panic hook reports and exits, and `abort` drops the unwinding tables
+# (~140 KB in this binary). Consequence: `cargo test --release` is not
+# supported; the gate runs the debug tests.
+panic = "abort"
 incremental = false
 overflow-checks = true
 

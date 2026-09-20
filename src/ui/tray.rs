@@ -1,12 +1,10 @@
-//! Tray icon wrapper with the single `TrayWrapper` naming set.
+//! Tray icon wrapper.
 //!
-//! `new / rebuild_menu / sync_menu / update_icon_if_changed / icon_rect` —
-//! construction failures return [`TrayError`]; runtime updates log through
-//! `tracing` (the loop continues on a failed icon push).
+//! Construction failures return [`TrayError`]; runtime updates log through
+//! `tracing` and the loop continues on a failed icon push.
 //!
-//! Deliberately carries **no tooltip**: the shell shows it on hover, exactly
-//! where the volume overlay is drawn, so it would cover the feedback it was
-//! meant to complement. The overlay already carries the device and state.
+//! Carries **no tooltip** on purpose: the shell draws it on hover exactly where
+//! the volume overlay appears, covering the feedback it was meant to complement.
 
 use thiserror::Error;
 use tray_icon::{TrayIcon, TrayIconBuilder};
@@ -35,9 +33,8 @@ pub enum TrayError {
 
 /// Wrapper around `tray-icon`'s `TrayIcon` holding the menu handles.
 pub struct TrayWrapper {
-    /// Underlying tray icon.
     pub tray: TrayIcon,
-    /// Handles to keep the menu alive.
+    /// Kept alive for the tray icon's lifetime.
     pub handles: MenuHandles,
     /// Last mute state pushed to the icon.
     ///

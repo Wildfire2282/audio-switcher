@@ -1,48 +1,37 @@
 //! Volume overlay (OSD) — a borderless, non-activating layered popup painted
 //! with GDI next to the tray icon.
 //!
-//! Why it exists: `Shell_NotifyIcon(NIF_TIP)` only paints after the system
-//! hover delay and does not repaint an already-visible bubble, so the tray
-//! tooltip cannot show per-notch wheel feedback. This window belongs to the
-//! process, so a repaint lands in the same frame as the volume change.
+//! It exists because `Shell_NotifyIcon(NIF_TIP)` only paints after the system
+//! hover delay and never repaints a visible bubble, so the tray tooltip cannot
+//! show per-notch wheel feedback; this window lands in the same frame as the
+//! volume change.
 //!
-//! Styling deliberately matches the application's own menus rather than the
-//! Windows 11 XAML flyouts. Measured on Windows 11, a `TrackPopupMenu` menu is
-//! a `#32768` window that the shell only themes: it gets the *small* corner
-//! (`DWMWCP_ROUNDSMALL`, 4px), no acrylic, and the system menu font. A XAML
-//! flyout (`Xaml_WindowedPopupClass`) gets 8px corners and a material — a
-//! different generation of the design language. The card therefore mirrors the
-//! menu: 4px radius, opaque, system menu font, themed palette.
+//! Three Win32 constraints shape it:
+//! - Never activate (`WS_EX_NOACTIVATE` + `SW_SHOWNOACTIVATE`): activation would
+//!   steal the tray icon's hover state and break the hover-roll gesture that
+//!   gates wheel volume.
+//! - Click-through (`WS_EX_TRANSPARENT`): it sits beside the icon and must not
+//!   shadow it.
+//! - Explicit layer attributes: a `WS_EX_LAYERED` window with none is fully
+//!   transparent (the classic silent no-show), and the colour key is what makes
+//!   the rounded corners transparent instead of showing the square backing.
 //!
-//! Three Win32 constraints shape the window:
-//! - Never activate (`WS_EX_NOACTIVATE` + `SW_SHOWNOACTIVATE`): activation
-//!   would steal the tray icon's hover state and break the hover-roll gesture
-//!   that gates wheel volume.
-//! - Click-through (`WS_EX_TRANSPARENT`): the overlay sits beside the icon and
-//!   must not shadow it.
-//! - Explicit layer attributes (`SetLayeredWindowAttributes`): a
-//!   `WS_EX_LAYERED` window with no layer attributes is fully transparent — the
-//!   classic silent no-show. The colour key is what keeps the rounded corners
-//!   truly transparent, since a layered window without one shows the square
-//!   backing behind the card.
+//! Styling mirrors the shell's own menus, not its XAML flyouts: measured on
+//! Windows 11, a `TrackPopupMenu` menu is a `#32768` window that gets the small
+//! corner (`DWMWCP_ROUNDSMALL`, 4px) and the system menu font, while a XAML
+//! flyout gets 8px and a material. The card therefore uses 4px, opaque, system
+//! menu font, themed palette.
 //!
-//! Best-effort by contract: every failure logs and degrades to "no overlay",
-//! never to a broken volume path (the same policy `tray` runtime updates use).
+//! Best-effort by contract: every failure logs and degrades to "no overlay".
 
 use crate::ui::osd::OsdContent;
 
-/// How long the overlay stays up after the last change, in milliseconds.
-///
 /// `app` owns the hide deadline (loop policy lives there) and this module owns
 /// only the window; the constant is shared so the two cannot drift apart.
 pub(crate) const VISIBLE_MS: u64 = 2000;
 
 /// Anchor rectangle in physical screen pixels: `(x, y, width, height)`.
 pub(crate) type Anchor = (i32, i32, i32, i32);
-
-// ---------------------------------------------------------------------------
-// Windows implementation
-// ---------------------------------------------------------------------------
 
 #[cfg(windows)]
 mod win {
@@ -327,12 +316,7 @@ mod win {
 #[cfg(windows)]
 pub(crate) use win::OsdOverlay;
 
-// ---------------------------------------------------------------------------
-// Non-Windows stub (compilation parity; no overlay)
-// ---------------------------------------------------------------------------
-
 #[cfg(not(windows))]
-/// Non-Windows stub: never creates a window.
 pub(crate) struct OsdOverlay;
 
 #[cfg(not(windows))]
@@ -343,9 +327,7 @@ impl OsdOverlay {
         None
     }
 
-    /// No-op on non-Windows.
     pub(crate) fn show(&mut self, _content: OsdContent, _anchor: Option<Anchor>) {}
 
-    /// No-op on non-Windows.
     pub(crate) fn hide(&self) {}
 }

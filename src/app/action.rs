@@ -12,7 +12,7 @@ use crate::audio::{AudioBackend, AudioDevice};
 use crate::config::{AppConfig, Lang};
 use crate::platform::hotkey::HotkeyAction;
 use crate::platform::osd::VISIBLE_MS;
-use crate::platform::{autostart_state, pump};
+use crate::platform::{AutostartMode, autostart_state, pump};
 use crate::ui::MenuState;
 use crate::ui::i18n::tr;
 use crate::ui::osd::format as format_osd;
@@ -26,7 +26,7 @@ impl<B: AudioBackend> App<B> {
         let snap = self.backend.fetch_snapshot_clamped(&self.cfg);
         let def_id = snap.default_device.as_ref().map(|d| d.id.as_str());
         let def_input_id = snap.default_input_device.as_ref().map(|d| d.id.as_str());
-        let autostart = autostart_state();
+        let autostart = autostart_state().mode();
         // In-place menu update; rebuilds only when the device list changed.
         self.tray.sync_menu(&MenuState {
             cfg: &self.cfg,
@@ -35,7 +35,7 @@ impl<B: AudioBackend> App<B> {
             inputs: &snap.input_devices,
             default_input_id: def_input_id,
             muted: snap.mute,
-            autostart: &autostart,
+            autostart,
             ui_lang: self.ui_lang,
         });
         // The snapshot is authoritative: resyncing here is also what keeps an
@@ -149,19 +149,7 @@ impl<B: AudioBackend> App<B> {
                     &tr("config_error", self.lang()),
                 );
             }
-            MenuAction::Autostart => {
-                let new_val = !self.cfg.autostart;
-                match crate::platform::set_autostart(new_val) {
-                    Ok(()) => {
-                        self.cfg.autostart = new_val;
-                        self.save_and_refresh(false);
-                    }
-                    Err(e) => {
-                        tracing::warn!("set_autostart failed: {e}");
-                        crate::platform::dialog::show_autostart_error(&e);
-                    }
-                }
-            }
+            MenuAction::Autostart(mode) => self.apply_autostart_mode(mode),
             MenuAction::LangSystem => {
                 self.cfg.lang = Lang::System;
                 self.ui_lang = self.cfg.effective_lang();
@@ -225,6 +213,23 @@ impl<B: AudioBackend> App<B> {
                     "{}: {e}",
                     crate::ui::i18n::tr("input_error", self.lang())
                 ));
+            }
+        }
+    }
+
+    /// Switch the autostart mechanism and persist the choice.
+    ///
+    /// Runs on the UI thread: `schtasks` costs ~100 ms, and a short stall right
+    /// after the click beats a state update the user cannot correlate with it.
+    fn apply_autostart_mode(&mut self, mode: AutostartMode) {
+        match crate::platform::set_autostart_mode(mode) {
+            Ok(()) => {
+                self.cfg.autostart_mode = mode;
+                self.save_and_refresh(false);
+            }
+            Err(e) => {
+                tracing::warn!("set_autostart_mode failed: {e}");
+                crate::platform::dialog::show_autostart_error(&e);
             }
         }
     }

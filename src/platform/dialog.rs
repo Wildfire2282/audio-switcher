@@ -2,8 +2,8 @@
 //!
 //! Centering uses a transient `FindWindowW` + `SetWindowPos` pass from a
 //! short-lived worker thread: no hook is ever installed just to center a
-//! dialog. Contract: `shell` and `app` may call `show_msgbox` and
-//! `show_autostart_error`; dialog owns no other platform state.
+//! dialog. Contract: `shell`, `autostart` and `app` may call `show_msgbox`
+//! and `show_autostart_error`; dialog owns no other platform state.
 
 use super::autostart::AutostartError;
 #[cfg(windows)]
@@ -67,11 +67,12 @@ pub fn show_critical(msg: &str) {
     }
 }
 
-/// Show the autostart failure with actionable guidance. Takes the typed error
-/// so the `#[source]` chain reaches the user instead of a bare string.
+/// Show the autostart failure with its cause. Takes the typed error so the
+/// detail (exit code plus whatever `schtasks` said) reaches the user instead of
+/// a bare string.
 pub(crate) fn show_autostart_error(err: &AutostartError) {
     show_msgbox(&format!(
-        "Failed to change the autostart setting.\n\nDetails: {err}\n\nYou can also toggle it in Task Manager > Startup apps."
+        "Failed to change the autostart setting.\n\nDetails: {err}"
     ));
 }
 

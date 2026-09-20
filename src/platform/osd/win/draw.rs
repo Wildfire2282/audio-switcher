@@ -41,9 +41,7 @@ use windows::core::w;
 /// user scrolls.
 #[derive(Clone, Copy)]
 enum Cached<T> {
-    /// Not looked up yet.
     Pending,
-    /// Looked up, with the answer.
     Ready(Option<T>),
 }
 
