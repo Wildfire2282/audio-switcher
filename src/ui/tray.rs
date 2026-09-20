@@ -59,6 +59,10 @@ impl TrayWrapper {
         let icon = make_icon(state.muted)?;
         let tray = TrayIconBuilder::new()
             .with_icon(icon)
+            // Attach the boot menu here, not only from the post-snapshot rebuild
+            // in `assemble`: if that rebuild fails, a menu-less tray icon would
+            // have no way to switch devices or exit at all.
+            .with_menu(Box::new(handles.menu.clone()))
             .with_menu_on_left_click(false)
             .build()?;
         Ok(Self {
@@ -66,6 +70,14 @@ impl TrayWrapper {
             handles,
             pushed_mute: Some(state.muted),
         })
+    }
+
+    /// Move only the mute check for an external mute change.
+    ///
+    /// A full [`Self::sync_menu`] would walk the device list for nothing; the
+    /// icon is updated separately so the two read-outs stay in step.
+    pub fn sync_mute(&mut self, muted: bool) {
+        self.handles.set_muted(muted);
     }
 
     /// Update the tray icon for `muted`, skipping an unchanged state.

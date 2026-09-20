@@ -8,7 +8,7 @@
 use std::time::{Duration, Instant};
 
 use crate::app::handler::MenuAction;
-use crate::audio::{AudioBackend, AudioDevice};
+use crate::audio::AudioBackend;
 use crate::config::{AppConfig, Lang};
 use crate::platform::hotkey::HotkeyAction;
 use crate::platform::osd::VISIBLE_MS;
@@ -46,34 +46,28 @@ impl<B: AudioBackend> App<B> {
         self.tray.update_icon_if_changed(snap.mute);
     }
 
-    /// Read the default endpoint's device, volume and mute.
-    ///
-    /// Prefers the single-COM-round-trip batch; the returned flag is `false` when
-    /// the individual queries were needed instead, so the caller can say so once.
-    pub(super) fn read_volume_state(&self) -> (Option<AudioDevice>, u32, bool, bool) {
-        #[cfg(windows)]
-        if let Ok((volume, mute)) = self.backend.get_volume_and_mute() {
-            return (self.backend.get_default_device(), volume, mute, true);
-        }
-        (
-            self.backend.get_default_device(),
-            self.backend.get_volume().unwrap_or(0),
-            self.backend.get_mute().unwrap_or(false),
-            false,
-        )
-    }
-
     /// Re-read volume/mute/device after an external change (media keys, other
-    /// apps, the system mixer) and refresh the mirror plus the tray icon.
+    /// apps, the system mixer) and refresh the mirror, the menu's mute check and
+    /// the tray icon.
+    ///
+    /// A failed read keeps the last known mirror: there is no second query to
+    /// fall back to, and reporting `0%`/unmuted would both mislead the next
+    /// wheel step and paint a wrong check mark.
     pub(super) fn resync_volume_state(&mut self) {
-        let (device, volume, mute, batched) = self.read_volume_state();
-        if !batched {
-            tracing::warn!("batch volume read failed; falling back to individual queries");
+        match self.backend.get_volume_and_mute() {
+            Ok((volume, mute)) => {
+                self.cached_volume = volume;
+                self.cached_mute = mute;
+            }
+            Err(e) => {
+                tracing::warn!("volume/mute refresh failed; keeping the last known values: {e}");
+            }
         }
-        self.cached_volume = volume;
-        self.cached_mute = mute;
-        self.cached_device = device;
-        self.tray.update_icon_if_changed(mute);
+        self.cached_device = self.backend.get_default_device();
+        // An external mute must move the menu's check mark too, or it disagrees
+        // with the tray icon until some unrelated refresh corrects it.
+        self.tray.sync_mute(self.cached_mute);
+        self.tray.update_icon_if_changed(self.cached_mute);
     }
 
     /// Show the volume overlay for the mirrored state and restart its deadline.

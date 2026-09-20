@@ -2,8 +2,8 @@
 //!
 //! Fixed shape: grayed `{DisplayName} v{ver}` title → separator → feature
 //! group (devices, toggles, system tools incl. hotkey-settings entry) →
-//! separator → fixed tail (refresh → autostart → language submenu → about →
-//! exit always last, no separators inside the tail). Hotkeys have no submenu:
+//! separator → tail (refresh → autostart → language submenu → separator →
+//! about → exit always last). Hotkeys have no submenu:
 //! they are unbound by default and edited manually in `config.json` (JSONC).
 
 use muda::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -132,6 +132,12 @@ impl MenuHandles {
     /// Sanitize a device id the same way [`build_menu`] does.
     fn sanitize_id(id: &str) -> String {
         id.replace(['\0', '\n', '\r'], "_")
+    }
+
+    /// Move only the mute check, for an external mute change: every other leaf
+    /// is already current, so the [`Self::sync_state`] device walk is not needed.
+    pub fn set_muted(&self, muted: bool) {
+        self.mute.set_checked(muted);
     }
 
     /// Apply the autostart state to the three-way group: an unreadable state

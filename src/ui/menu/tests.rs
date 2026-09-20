@@ -390,6 +390,28 @@ fn hotkey_config_change_keeps_menu_in_place() {
 }
 
 #[test]
+fn set_muted_moves_only_the_mute_check() {
+    let cfg = test_cfg();
+    let base = MenuState {
+        cfg: &cfg,
+        devices: &[],
+        default_id: None,
+        inputs: &[],
+        default_input_id: None,
+        muted: false,
+        autostart: Some(AutostartMode::Off),
+        ui_lang: Lang::En,
+    };
+    let handles = build_menu(&base).expect("menu builds");
+    assert!(!handles.mute.is_checked());
+    // An external mute reaches the check without a full sync pass.
+    handles.set_muted(true);
+    assert!(handles.mute.is_checked());
+    handles.set_muted(false);
+    assert!(!handles.mute.is_checked());
+}
+
+#[test]
 fn empty_enumeration_shows_placeholder() {
     let cfg = test_cfg();
     let base = MenuState {

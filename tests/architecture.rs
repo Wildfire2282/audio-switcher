@@ -185,10 +185,8 @@ fn agent_doc_stays_within_its_token_budget() {
 }
 
 /// A file an agent cannot read in one pass is a file it will mis-edit. The limit
-/// is the ceiling, not the target: today's worst file is `app/mod.rs` at ~750
-/// production lines (it is cohesive — its methods share `App`'s state, so the
-/// split cost would be wider field visibility). Split along a seam instead of
-/// raising this, and lower the number once the worst file shrinks.
+/// is the ceiling, not the target: split along a seam instead of raising it, and
+/// lower the number once the worst file shrinks.
 #[test]
 fn no_source_file_outgrows_one_reading_pass() {
     const LIMIT: usize = 800;

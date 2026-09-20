@@ -262,6 +262,32 @@ fn legacy_pascalcase_file_imported_once() {
     assert!(!import_legacy_file(&new_path, &legacy_path));
 }
 
+#[test]
+fn unparsable_legacy_file_is_reported_and_left_alone() {
+    // One key removed from the schema fails the whole parse
+    // (`deny_unknown_fields`): the import must not write defaults over the
+    // user's settings and then claim success. The old file survives on disk as
+    // the recoverable copy.
+    let dir = tempdir().unwrap();
+    let new_path = dir.path().join("new").join("config.json");
+    let legacy_path = dir.path().join("legacy").join("config.json");
+    std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &legacy_path,
+        r#"{"version":1,"lang":"en","wheel_acceleration":false}"#,
+    )
+    .unwrap();
+    assert!(!import_legacy_file(&new_path, &legacy_path));
+    assert!(
+        !new_path.exists(),
+        "defaults must not replace an unreadable legacy file"
+    );
+    assert!(
+        legacy_path.exists(),
+        "the unreadable legacy file must survive"
+    );
+}
+
 /// Load `raw` from a fresh temp file, returning the config plus its dir.
 fn load_raw(raw: &str) -> (AppConfig, tempfile::TempDir) {
     let dir = tempdir().unwrap();

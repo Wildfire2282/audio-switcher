@@ -399,6 +399,11 @@ fn legacy_config_path() -> Option<PathBuf> {
 
 /// Copy the legacy file to `new_path` when `new_path` is missing. Pure over
 /// explicit paths so tests can isolate it from the real `%APPDATA%`.
+///
+/// A legacy file the current schema cannot parse is reported and skipped, not
+/// replaced by defaults: `deny_unknown_fields` makes one removed key fail the
+/// whole parse, and silently overwriting the user's settings as "imported" is
+/// the opposite of the loud reset `AppConfig::load_from_bytes` performs.
 fn import_legacy_file(new_path: &Path, legacy_path: &Path) -> bool {
     if new_path.exists() || !legacy_path.exists() {
         return false;
@@ -406,9 +411,16 @@ fn import_legacy_file(new_path: &Path, legacy_path: &Path) -> bool {
     let Ok(bytes) = std::fs::read(legacy_path) else {
         return false;
     };
-    let cfg = serde_json::from_slice::<AppConfig>(&strip_json_comments(&bytes))
-        .map(AppConfig::migrate)
-        .unwrap_or_default();
+    let cfg = match serde_json::from_slice::<AppConfig>(&strip_json_comments(&bytes)) {
+        Ok(cfg) => AppConfig::migrate(cfg),
+        Err(e) => {
+            tracing::warn!(
+                "legacy config {} ignored ({e}); starting from defaults",
+                legacy_path.display()
+            );
+            return false;
+        }
+    };
     cfg.save_to(new_path).is_ok()
 }
 
