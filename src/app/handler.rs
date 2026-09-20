@@ -1,39 +1,31 @@
 //! Menu action dispatch — maps `muda` IDs to typed actions.
 
-/// Typed menu action parsed from a `MenuEvent` ID.
+use crate::platform::AutostartMode;
+
+/// Typed menu action parsed from a `MenuEvent` ID. Variant names are the
+/// documentation; a payload is the id the menu emitted.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuAction {
-    /// Switch to device `id`.
     Device(String),
-    /// Switch to input (capture) device `id`.
     InputDevice(String),
-    /// Toggle mute.
     Mute,
-    /// Toggle volume-limit enabled.
     VolEnabled,
-    /// Set limit to `u32` percent.
     VolLimit(u32),
-    /// Re-enumerate devices (manual refresh fallback).
+    /// Manual fallback after sleep/resume or a lost callback.
     Refresh,
-    /// Open volume mixer.
     OpenMixer,
-    /// Open sound settings.
     OpenSound,
-    /// Open the config folder for manual hotkey editing.
+    /// Opens the config folder for manual hotkey editing.
     OpenHotkeySettings,
-    /// Toggle autostart.
-    Autostart,
-    /// Follow the system language.
+    /// Off / current-user `Run` value / elevated logon task.
+    Autostart(AutostartMode),
     LangSystem,
-    /// Switch language to Chinese.
     LangZh,
-    /// Switch language to English.
     LangEn,
-    /// Open about URL.
     About,
-    /// Exit process.
     Exit,
-    /// Unknown ID — warned and ignored by the caller.
+    /// Warned and ignored by the caller.
     Unknown(String),
 }
 
@@ -68,7 +60,9 @@ impl MenuAction {
             menu_id::OPEN_MIXER => Self::OpenMixer,
             menu_id::OPEN_SOUND => Self::OpenSound,
             menu_id::OPEN_HOTKEY_SETTINGS => Self::OpenHotkeySettings,
-            menu_id::AUTOSTART => Self::Autostart,
+            menu_id::AUTOSTART_OFF => Self::Autostart(AutostartMode::Off),
+            menu_id::AUTOSTART_USER => Self::Autostart(AutostartMode::User),
+            menu_id::AUTOSTART_ADMIN => Self::Autostart(AutostartMode::Admin),
             menu_id::LANG_SYSTEM => Self::LangSystem,
             menu_id::LANG_ZH => Self::LangZh,
             menu_id::LANG_EN => Self::LangEn,

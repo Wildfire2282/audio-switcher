@@ -1,12 +1,10 @@
-//! Audio backend abstraction.
+//! Audio backend abstraction: the port for device enumeration, default
+//! switching and volume/mute control, generic over `App` so tests inject
+//! `MockBackend` and Windows uses `WasapiBackend`.
 //!
-//! `AudioBackend` is the port for device enumeration, default switching and
-//! volume/mute control. The trait is generic over `App` for test injection
-//! (`MockBackend`) and for the Windows `WasapiBackend`.
-//!
-//! The cast lints are allowed for the whole layer, not per file: every
-//! conversion they would flag is at the COM boundary, where the alternative is
-//! a `try_from` branch for a range the API already guarantees.
+//! The cast lints are allowed for the whole layer, not per file: every flagged
+//! conversion is at the COM boundary, where the alternative is a `try_from`
+//! branch for a range the API already guarantees.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -29,19 +27,13 @@ pub struct AudioDevice {
     pub name: String,
 }
 
-/// Errors from the audio subsystem.
+/// Errors from the audio subsystem. The `#[error]` text is the user-visible
+/// message.
 #[derive(Debug, Clone, Error)]
 pub enum AudioError {
-    /// COM / HRESULT failure; `hr` preserved for diagnostics.
+    /// `hr` is preserved for diagnostics.
     #[error("COM 0x{hr:08X}: {msg}")]
-    Com {
-        /// Raw HRESULT value.
-        hr: i32,
-        /// Human-readable message.
-        msg: String,
-    },
-
-    /// Generic failure with context.
+    Com { hr: i32, msg: String },
     #[error("audio failed: {0}")]
     Failed(String),
 }
@@ -56,112 +48,56 @@ impl From<windows::core::Error> for AudioError {
     }
 }
 
-/// Backend for audio operations.
+/// Every fallible method reports one of two failures: `AudioError::Com` when
+/// WASAPI returns an HRESULT, `AudioError::Failed` when the argument names an
+/// endpoint that does not exist.
 ///
-/// Must be `Send` where possible; `WasapiBackend` registers a COM notification
+/// Must be `Send` where possible: `WasapiBackend` registers a COM notification
 /// client on the STA thread and keeps it via `OnceLock`.
 pub trait AudioBackend {
-    /// Enumerate active render endpoints.
-    ///
-    /// # Errors
-    ///
-    /// Returns `AudioError::Com` on WASAPI failure.
     fn enumerate_devices(&mut self) -> Result<Vec<AudioDevice>, AudioError>;
 
-    /// Current default render device, if any.
     fn get_default_device(&self) -> Option<AudioDevice>;
 
-    /// Set the default render device by `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `AudioError::Failed` if `id` is unknown, `Com` on WASAPI failure.
     fn set_default_device(&mut self, id: &str) -> Result<(), AudioError>;
 
-    /// Enumerate active capture (input) endpoints.
-    ///
-    /// # Errors
-    ///
-    /// Returns `AudioError::Com` on WASAPI failure.
     fn enumerate_input_devices(&mut self) -> Result<Vec<AudioDevice>, AudioError>;
 
-    /// Current default capture device, if any.
     fn get_default_input_device(&self) -> Option<AudioDevice>;
 
-    /// Set the default capture device by `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `AudioError::Failed` if `id` is unknown, `Com` on WASAPI failure.
     fn set_default_input_device(&mut self, id: &str) -> Result<(), AudioError>;
 
-    /// Master volume `0..=100`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `AudioError::Com` on WASAPI failure.
+    /// `0..=100`.
     fn get_volume(&self) -> Result<u32, AudioError>;
 
-    /// Set master volume `0..=100` (values outside are clamped by caller).
-    ///
-    /// # Errors
-    ///
-    /// Returns `AudioError::Com` on WASAPI failure.
+    /// Values outside `0..=100` are clamped by the caller.
     fn set_volume(&mut self, volume: u32) -> Result<(), AudioError>;
 
-    /// Whether the endpoint is muted.
-    ///
-    /// # Errors
-    ///
-    /// Returns `AudioError::Com` on WASAPI failure.
     fn get_mute(&self) -> Result<bool, AudioError>;
 
-    /// Set mute state.
-    ///
-    /// # Errors
-    ///
-    /// Returns `AudioError::Com` on WASAPI failure.
     fn set_mute(&mut self, mute: bool) -> Result<(), AudioError>;
 
-    /// Clamp volume to `cfg` if limiting is enabled.
-    ///
-    /// # Errors
-    ///
-    /// Returns `AudioError::Com` if current volume cannot be read.
     fn clamp_volume_if_needed(&mut self, cfg: &AppConfig) -> Result<(), AudioError>;
 
-    /// Batch fetch `(volume, mute)`; default impl does two calls.
-    ///
-    /// `WasapiBackend` overrides with a single `Activate`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `AudioError::Com` on WASAPI failure.
+    /// Batched so `WasapiBackend` can do one `Activate` instead of two calls.
     fn get_volume_and_mute(&self) -> Result<(u32, bool), AudioError> {
         Ok((self.get_volume()?, self.get_mute()?))
     }
 
-    /// Whether an external device change notification fired.
-    ///
-    /// Default `false` for mocks.
     fn poll_device_changed(&mut self) -> bool {
         false
     }
 
-    /// Take and clear the "external volume/mute changed" flag (keyboard media
-    /// keys, other apps, system mixer). Drives a tray-icon refresh without
-    /// polling. Default `false` for mocks.
+    /// Take and clear the "external volume/mute changed" flag (media keys,
+    /// other apps, the system mixer); it drives an icon refresh without polling.
     fn take_volume_changed(&mut self) -> bool {
         false
     }
 
-    /// Invalidate enumeration caches. Caching backends re-enumerate on the
-    /// next call; uncached backends implement the empty body explicitly —
-    /// there is deliberately no `noop` default to inherit.
+    /// Uncached backends implement the empty body explicitly — there is
+    /// deliberately no `noop` default to inherit.
     fn clear_cache(&mut self);
 
-    /// Fetch a clamped snapshot in one round-trip; default builds from the
-    /// methods above.
     fn fetch_snapshot_clamped(&mut self, cfg: &AppConfig) -> AudioSnapshot {
         let devices = self.enumerate_devices().unwrap_or_default();
         let default_device = self.get_default_device();
@@ -184,17 +120,12 @@ pub trait AudioBackend {
 /// repeated `CoCreateInstance` calls.
 #[derive(Debug, Clone)]
 pub struct AudioSnapshot {
-    /// Enumerated devices.
     pub devices: Vec<AudioDevice>,
-    /// Default device, if known.
     pub default_device: Option<AudioDevice>,
-    /// Enumerated capture (input) devices.
     pub input_devices: Vec<AudioDevice>,
-    /// Default capture device, if known.
     pub default_input_device: Option<AudioDevice>,
-    /// Current volume `0..=100`.
+    /// `0..=100`.
     pub volume: u32,
-    /// Mute state.
     pub mute: bool,
 }
 

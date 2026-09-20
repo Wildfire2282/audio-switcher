@@ -10,37 +10,27 @@ use crate::config::Lang;
 use crate::ui::i18n::tr;
 use crate::ui::label::truncate_label;
 
-/// Device-name budget in the overlay.
-///
-/// Narrower than [`crate::ui::label::MAX_LABEL_CHARS`]: the card is a fixed
-/// width and draws one line, but the name is still truncated so a hostile
-/// endpoint name cannot widen it.
+/// Narrower than [`crate::ui::label::MAX_LABEL_CHARS`]: the card is one fixed
+/// line, and the name is truncated so a hostile endpoint name cannot widen it.
 pub(crate) const OSD_NAME_CHARS: usize = 40;
 
-/// Widest read-out a percentage can produce.
-///
-/// Reserved together with the mute word so the slider keeps one length whatever
-/// is on screen: the read-out counts digits as the volume moves (`5%` → `50%` →
-/// `100%`) and a bar sized to the text on screen visibly resizes with it.
+/// Reserved with the mute word so the slider keeps one length: a bar sized to
+/// the text on screen visibly resizes as the digits change (`5%` → `100%`).
 pub(crate) const WIDEST_PERCENT: &str = "100%";
 
 /// Text the overlay paints.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OsdContent {
-    /// Device name; empty when no default device is known (the line is
-    /// skipped by the painter rather than drawn blank).
+    /// Empty when no default device is known; the painter skips the line rather
+    /// than drawing it blank.
     pub(crate) device: String,
-    /// State text: `"72%"`, or the localized mute word.
+    /// `"72%"`, or the localized mute word.
     pub(crate) state: String,
-    /// The localized mute word, whether or not `state` is showing it.
-    ///
     /// The card reserves a column sized for [`WIDEST_PERCENT`] or this word,
-    /// whichever measures wider — both are measurable only while the painter
-    /// holds the font, and neither may depend on the read-out on screen.
+    /// whichever is wider, so the slider keeps one length whatever is shown.
     pub(crate) muted_label: String,
     /// Bar fill, `0..=100`.
     pub(crate) percent: u32,
-    /// Whether the bar paints in the muted (grey) colour.
     pub(crate) muted: bool,
 }
 
@@ -68,10 +58,6 @@ pub(crate) fn format(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Design tokens
-// ---------------------------------------------------------------------------
-
 /// A colour as `(r, g, b)`. `platform` owns the `COLORREF` packing.
 pub(crate) type Rgb = (u8, u8, u8);
 
@@ -84,19 +70,12 @@ pub(crate) type Rgb = (u8, u8, u8);
 /// user's accent, the way the shell's own volume flyout paints it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Palette {
-    /// Card fill.
     pub(crate) card: Rgb,
-    /// Hairline drawn around the card.
     pub(crate) border: Rgb,
-    /// Primary text (the device name).
     pub(crate) text: Rgb,
-    /// Secondary text (the state read-out).
     pub(crate) dim_text: Rgb,
-    /// Slider track.
     pub(crate) track: Rgb,
-    /// Slider fill and thumb.
     pub(crate) fill: Rgb,
-    /// Slider fill and thumb while muted.
     pub(crate) muted_fill: Rgb,
 }
 

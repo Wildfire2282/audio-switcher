@@ -1,9 +1,6 @@
-//! Shared label helpers — single source of truth for menu/overlay text.
-//!
-//! Device names come from WASAPI and may contain control characters or be
-//! excessively long for menus (muda) and the overlay card. Both
-//! [`crate::ui::menu`] and [`crate::ui::osd`] funnel through here so truncation
-//! width and sanitization cannot drift apart.
+//! Truncation and sanitization shared by the menu and the overlay card, so the
+//! two budgets cannot drift apart. Device names come from WASAPI and may carry
+//! control characters or be too long for either.
 
 /// Maximum label width in characters (menu budget, shared with the overlay so
 /// truncation cannot drift apart).

@@ -25,6 +25,29 @@ fn parse_device() {
 }
 
 #[test]
+fn parse_autostart_modes() {
+    // Each mode is reachable from its own id: a rename here would make the item
+    // parse as `Unknown`, and the click would silently do nothing.
+    assert_eq!(
+        MenuAction::from_id("autostart_off"),
+        MenuAction::Autostart(AutostartMode::Off)
+    );
+    assert_eq!(
+        MenuAction::from_id("autostart_user"),
+        MenuAction::Autostart(AutostartMode::User)
+    );
+    assert_eq!(
+        MenuAction::from_id("autostart_admin"),
+        MenuAction::Autostart(AutostartMode::Admin)
+    );
+    // The submenu's own id is not an action.
+    assert!(matches!(
+        MenuAction::from_id("autostart"),
+        MenuAction::Unknown(_)
+    ));
+}
+
+#[test]
 fn parse_hotkey_settings() {
     assert_eq!(
         MenuAction::from_id("open_hotkey_settings"),

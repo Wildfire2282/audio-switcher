@@ -6,28 +6,29 @@
 
 use crate::config::AppConfig;
 use crate::platform::hotkey::{self, Hotkey, HotkeyAction, HotkeyError};
-use crate::platform::{AutostartState, autostart_state};
+use crate::platform::{AutostartMode, AutostartState, autostart_state};
 
-/// Self-heal the autostart entry when the user wants it but the registry
-/// reads explicit `Disabled`. `Unknown` never writes — it only logs; the
-/// menu renders the item grayed.
+/// Self-heal the current-user `Run` value when the user asked for it but the
+/// read-back says no entry exists. Recreating the elevated task would need a
+/// UAC prompt, and raising one on every logon is worse than the missing entry:
+/// the menu shows it as not set and the user re-enables it deliberately.
+///
+/// A read failure (`Unknown`) never writes.
 pub(super) fn ensure_autostart(cfg: &AppConfig) {
-    if !cfg.autostart {
-        return;
-    }
-    match autostart_state() {
-        AutostartState::Enabled => {}
-        AutostartState::Disabled => {
-            std::thread::spawn(|| {
-                if let Err(e) = crate::platform::set_autostart(true) {
-                    crate::platform::dialog::show_autostart_error(&e);
-                }
-            });
-        }
-        AutostartState::Unknown(reason) => {
-            tracing::warn!(
-                "autostart state unknown at startup ({reason}); leaving registry untouched"
-            );
+    // Synchronous on purpose: the caller builds the menu from this cache right
+    // after, so a worker thread here races that read and shows "Off" for an
+    // installed elevated task until some unrelated refresh corrected it.
+    crate::platform::refresh_admin_task_cache();
+    match cfg.autostart_mode {
+        AutostartMode::Off | AutostartMode::Admin => {}
+        AutostartMode::User => {
+            if autostart_state() == AutostartState::Off {
+                std::thread::spawn(|| {
+                    if let Err(e) = crate::platform::set_autostart_mode(AutostartMode::User) {
+                        crate::platform::dialog::show_autostart_error(&e);
+                    }
+                });
+            }
         }
     }
 }

@@ -4,8 +4,6 @@
 
 use crate::config::Lang;
 
-/// Translate `key` for `lang`.
-///
 /// Unknown keys are returned verbatim, which keeps menus debuggable.
 #[must_use]
 pub fn tr(key: &str, lang: Lang) -> String {
@@ -65,6 +63,27 @@ pub fn tr(key: &str, lang: Lang) -> String {
                 "开机自启".into()
             } else {
                 "Auto Launch".into()
+            }
+        }
+        "autostart_off" => {
+            if zh {
+                "关闭".into()
+            } else {
+                "Off".into()
+            }
+        }
+        "autostart_user" => {
+            if zh {
+                "普通权限".into()
+            } else {
+                "Standard".into()
+            }
+        }
+        "autostart_admin" => {
+            if zh {
+                "管理员权限".into()
+            } else {
+                "Administrator".into()
             }
         }
         "about" => {

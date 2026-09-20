@@ -1,23 +1,18 @@
 //! UTF-16 conversion for the Win32 string boundary.
 //!
-//! Win32 splits into two string conventions, and mixing them up is a
-//! memory-safety bug rather than a cosmetic one:
-//!
-//! - `PCWSTR` parameters read until a NUL terminator, so a buffer without one
-//!   lets the API run past the end of the allocation — [`wide_z`].
-//! - Length-taking APIs (`DrawTextW`) read exactly the length given, so a
-//!   terminator would be a stray glyph — [`wide`].
-//!
-//! Both are here so the choice is named at every call site instead of being
-//! re-derived from the expression each time.
+//! Mixing the two conventions is a memory-safety bug, not a cosmetic one:
+//! `PCWSTR` parameters read until a NUL terminator ([`wide_z`]), so a buffer
+//! without one lets the API run past the allocation; length-taking APIs
+//! (`DrawTextW`) read exactly the given length ([`wide`]), so a terminator there
+//! would be a stray glyph.
 
-/// Encode `text` as a NUL-terminated UTF-16 buffer, for `PCWSTR` parameters.
+/// For `PCWSTR` parameters.
 #[must_use]
 pub(crate) fn wide_z(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// Encode `text` as UTF-16 without a terminator, for length-taking APIs.
+/// For length-taking APIs.
 #[must_use]
 pub(crate) fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().collect()
