@@ -1,10 +1,10 @@
 //! Windows platform abstractions: guards, shell, dialogs, pump, autostart.
 //!
 //! `platform/*` modules are mutually unreferenced except for foundational
-//! use: `dialog` (message boxes) and `shell` may be called from `app`/`ui`,
-//! `logging`/`shell` format `autostart` errors, and `wide` is the shared
-//! UTF-16 boundary conversion. Those edges are noted on the callee side per the
-//! module contract.
+//! use: `dialog` (message boxes, including the autostart error box) and
+//! `shell` may be called from `app`/`ui`, `shell` borrows `autostart`'s exe
+//! path, and `utf16` is the shared UTF-16 boundary conversion. Those edges are
+//! noted on the callee side per the module contract.
 
 pub mod autostart;
 pub mod com;
@@ -21,6 +21,8 @@ pub mod theme;
 #[cfg(windows)]
 pub mod utf16;
 
-pub use autostart::{AutostartState, autostart_state, set_autostart};
+pub use autostart::{
+    AutostartMode, AutostartState, autostart_state, refresh_admin_task_cache, set_autostart_mode,
+};
 pub use com::{ComError, ComGuard};
 pub use single_instance::{InstanceError, SingleInstanceGuard};

@@ -10,10 +10,9 @@
 //! - `ui` — tray UI
 //! - `app` — runtime
 //!
-//! Layering: `platform` owns every Win32 call, `ui` turns state into text and
-//! colour, `app` owns loop policy. Neither `ui` nor `app` calls Win32 directly,
-//! and `platform` never invents UI text a caller did not hand it.
-//! `tests/architecture.rs` enforces this instead of trusting a reader.
+//! `platform` owns every Win32 call, `ui` turns state into text and colour,
+//! `app` owns loop policy, and `platform` never invents UI text a caller did not
+//! hand it. `tests/architecture.rs` enforces that instead of trusting a reader.
 //!
 //! # Where to look
 //!
@@ -30,7 +29,8 @@
 //! - audio IO: devices, volume, COM callbacks → `audio::wasapi::{notify, policy}`
 //! - config fields, migration, paths → `config`
 //! - global hotkeys → `platform::hotkey`
-//! - autostart, dialogs, single instance, logging → `platform`
+//! - autostart (off / current-user `Run` value / elevated logon task),
+//!   dialogs, single instance, logging → `platform`
 //!
 //! # Invariants
 //!
@@ -52,16 +52,24 @@
 //! - Encode Win32 strings through `platform::utf16`: the NUL terminator is a
 //!   memory-safety detail, not a formatting one.
 //!
+//! # Comments
+//!
+//! Default to none. One test decides whether a comment survives: delete it —
+//! would a competent reader then write a wrong change? Only what the code does
+//! not contain passes: an external fact (Win32/COM behaviour, units, thread
+//! affinity), a cross-file invariant, a measured result, or the cost a bug had.
+//! `// SAFETY:` is the one mandatory comment, on every `unsafe` block.
+//!
+//! Everything else is noise: doc lines the signature already carries, `# Errors`
+//! boilerplate, step narration, separators, restatements of what the code does.
+//!
 //! # Verification
 //!
-//! A green `cargo test` does not clear a UI change. The overlay's worst failures
-//! are invisible to unit tests: they pass while the app is unusable. Confirm the
-//! message loop still runs (idle CPU near zero, the tray menu opening) before
-//! believing an overlay change, and prefer runtime evidence — the render tests
-//! read the painted pixels back precisely because "it compiles and the tests
-//! pass" was once true of a build that pegged a core and ignored the wheel.
+//! A green `cargo test` does not clear a UI change: the overlay's worst failures
+//! are invisible to unit tests. Check that the message loop still runs (idle CPU
+//! near zero, the tray menu opens) and prefer runtime evidence.
 //!
-//! The gate is `scripts/smoke.ps1` (build, test, fmt, `clippy -D warnings`).
+//! The gate is `scripts/smoke.ps1`.
 #![warn(missing_docs)]
 #![warn(unsafe_op_in_unsafe_fn)]
 // Baseline-inherent duplicates (single-instance 0.3.3 pulls thiserror 1/syn 1;
@@ -80,6 +88,10 @@ pub(crate) mod ui;
 // Curated re-exports for the binary entry point (`main` is a separate crate,
 // so anything it touches is `pub` with this justification).
 pub use config::{AppConfig, Lang};
+// `main` must handle the elevated autostart helper before the single-instance
+// guard (the helper is a second process by design), so this one crosses the
+// crate boundary too.
+pub use platform::autostart::run_autostart_helper_if_requested;
 pub use platform::dialog::show_critical;
 pub use platform::logging::init as init_crash_reporting;
 pub use platform::{ComError, ComGuard, InstanceError, SingleInstanceGuard};

@@ -1,7 +1,7 @@
 //! Application entry — owns all runtime state and runs the message loop.
 //!
 //! Loop policy lives here; every Win32 call is behind `platform`
-//! (`pump` for messages/wait/quit, `hook` for the wheel hook).
+//! (`pump` for messages/wait/quit, `mouse_hook` for the wheel hook).
 
 pub mod handler;
 
@@ -48,12 +48,10 @@ pub struct App<B: AudioBackend = WasapiBackend> {
     hook: Option<mouse_hook::WheelHook>,
     hook_install_at: Instant,
     should_exit: bool,
-    /// In-process mirror of the default endpoint's volume/mute/device.
-    ///
-    /// The wheel path must not read the endpoint back: one notch used to cost
-    /// three `Activate` round-trips plus a property-store read purely to redraw
-    /// feedback. The mirror is authoritative for our own writes and is resynced
-    /// from the backend on every external change and every full refresh.
+    /// Authoritative for our own writes, resynced from the backend on every
+    /// external change and full refresh. The wheel path must not read the
+    /// endpoint back: one notch used to cost three `Activate` round-trips plus a
+    /// property-store read purely to redraw feedback.
     cached_volume: u32,
     cached_mute: bool,
     cached_device: Option<AudioDevice>,
@@ -100,6 +98,7 @@ impl AppBuilder {
     ///
     /// Returns [`TrayError`] when the tray icon cannot be created; the caller
     /// dialogs and exits (a transient Explorer absence is retried inside
+    /// `assemble` before the error propagates).
     #[must_use = "a failed build must dialog and exit, never be ignored"]
     pub fn build(self) -> Result<App<WasapiBackend>, TrayError> {
         let cfg = self.cfg.unwrap_or_else(AppConfig::load);
@@ -146,7 +145,8 @@ impl<B: AudioBackend> App<B> {
         // Register before the first menu build so its checks match reality.
         apply_hotkeys(&mut cfg);
         let ui_lang = cfg.effective_lang();
-        let autostart = autostart_state();
+        // `None` is "unreadable": the menu grays the group instead of guessing.
+        let autostart = autostart_state().mode();
         let boot = MenuState {
             cfg: &cfg,
             devices: &[],
@@ -154,7 +154,7 @@ impl<B: AudioBackend> App<B> {
             inputs: &[],
             default_input_id: None,
             muted: false,
-            autostart: &autostart,
+            autostart,
             ui_lang,
         };
         let mut attempt = 0;
@@ -178,7 +178,7 @@ impl<B: AudioBackend> App<B> {
             inputs: &snap.input_devices,
             default_input_id: default_input_id.as_deref(),
             muted: snap.mute,
-            autostart: &autostart,
+            autostart,
             ui_lang,
         });
         tray.update_icon_if_changed(snap.mute);

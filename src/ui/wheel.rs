@@ -12,7 +12,6 @@ pub struct WheelState {
 }
 
 impl WheelState {
-    /// Create an empty state.
     #[must_use]
     pub fn new() -> Self {
         Self {

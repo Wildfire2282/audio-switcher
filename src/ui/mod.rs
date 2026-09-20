@@ -1,18 +1,13 @@
 //! UI layer — tray icon, menu, overlay and wheel handling.
 
-/// Internationalisation helper.
 pub mod i18n;
-/// Icon rendering.
 pub mod icon;
-/// Shared label sanitization/truncation for menu + overlay text.
+/// Truncation and sanitization shared by the menu and the overlay, so their
+/// budgets cannot drift apart.
 pub(crate) mod label;
-/// Tray menu builder.
 pub mod menu;
-/// Overlay (OSD) content formatting.
 pub mod osd;
-/// Tray wrapper.
 pub mod tray;
-/// Wheel acceleration state.
 pub mod wheel;
 
 /// Re-exported for `crate::app`.

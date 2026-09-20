@@ -1,8 +1,6 @@
-//! Windows low-level mouse hook, encapsulated.
-//!
-//! The hook is installed lazily via [`WheelHook::install`] and automatically
-//! removed on drop. Global atomics communicate wheel events and button presses
-//! to the main loop.
+//! Windows low-level mouse hook: installed lazily via [`WheelHook::install`],
+//! removed on drop, and reporting wheel and button events to the main loop
+//! through global atomics.
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
@@ -197,7 +195,6 @@ pub(crate) fn take_click() -> bool {
 }
 
 #[cfg(not(windows))]
-/// Non-Windows stub.
 pub(crate) fn take_click() -> bool {
     false
 }
@@ -232,7 +229,6 @@ pub(crate) fn cursor_over_tray(wrapper: &crate::ui::tray::TrayWrapper) -> Option
 }
 
 #[cfg(not(windows))]
-/// Non-Windows stub.
 pub(crate) fn cursor_over_tray(_wrapper: &crate::ui::tray::TrayWrapper) -> Option<bool> {
     Some(false)
 }

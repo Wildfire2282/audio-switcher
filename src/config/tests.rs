@@ -14,7 +14,7 @@ fn default_values() {
     assert_eq!(c.lang.as_str(), "system");
     assert!(c.volume_limit_enabled);
     assert_eq!(c.volume_limit, 25);
-    assert!(c.autostart);
+    assert_eq!(c.autostart_mode, AutostartMode::User);
     assert_eq!(c.version, CURRENT_VERSION);
 }
 
@@ -172,6 +172,26 @@ fn migration_v2_explicit_zh_stays() {
 }
 
 #[test]
+fn migration_v3_autostart_boolean_becomes_mode() {
+    // v3 stored a bare boolean and defaulted it to true; it folds into the
+    // current-user mode, and the legacy key is never written back.
+    let dir = tempdir().unwrap();
+    let path = AppConfig::config_path_for(dir.path());
+    let raw = r#"{"version":3,"lang":"en","volume_limit_enabled":true,"volume_limit":25,"autostart":true}"#;
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, raw).unwrap();
+    let loaded = AppConfig::load_from(&path);
+    assert_eq!(loaded.autostart_mode, AutostartMode::User);
+    loaded.save_to(&path).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("\"autostart_mode\""), "{text}");
+    assert!(
+        !text.contains("\"autostart\":"),
+        "the legacy key must not be rewritten: {text}"
+    );
+}
+
+#[test]
 fn corrupted_fallback() {
     let dir = tempdir().unwrap();
     let path = AppConfig::config_path_for(dir.path());
@@ -292,7 +312,8 @@ fn invalid_hotkey_combo_dropped_without_resetting_the_file() {
         Some("Ctrl+Alt+Right")
     );
     assert_eq!(cfg.volume_limit, 50);
-    assert!(!cfg.autostart);
+    // The v3 boolean folds into the mode: `false` means no autostart entry.
+    assert_eq!(cfg.autostart_mode, AutostartMode::Off);
 }
 
 #[test]

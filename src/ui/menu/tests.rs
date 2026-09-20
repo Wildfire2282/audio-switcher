@@ -79,7 +79,7 @@ fn three_way_lang_group_checks_mode() {
             inputs: &[],
             default_input_id: None,
             muted: false,
-            autostart: &AutostartState::Disabled,
+            autostart: Some(AutostartMode::Off),
             ui_lang: Lang::En,
         };
         let handles = build_menu(&base).expect("menu builds");
@@ -99,7 +99,7 @@ fn tail_group_order_is_fixed() {
         inputs: &[],
         default_input_id: None,
         muted: false,
-        autostart: &AutostartState::Disabled,
+        autostart: Some(AutostartMode::Off),
         ui_lang: Lang::En,
     };
     let handles = build_menu(&base).expect("menu builds");
@@ -130,25 +130,91 @@ fn autostart_unknown_grayed_never_off() {
         inputs: &[],
         default_input_id: None,
         muted: false,
-        autostart: &AutostartState::Disabled,
+        autostart: Some(AutostartMode::Off),
         ui_lang: Lang::En,
     };
     let unknown = build_menu(&MenuState {
-        autostart: &AutostartState::Unknown("no read".into()),
+        autostart: None,
         ..base
     })
     .expect("menu builds");
-    assert!(!unknown.autostart.is_enabled());
-    assert!(!unknown.autostart.is_checked());
+    for item in [
+        &unknown.autostart_off,
+        &unknown.autostart_user,
+        &unknown.autostart_admin,
+    ] {
+        assert!(!item.is_enabled());
+        assert!(!item.is_checked());
+    }
     assert!(unknown.autostart.text().contains("unknown"));
 
-    let enabled = build_menu(&MenuState {
-        autostart: &AutostartState::Enabled,
+    let user = build_menu(&MenuState {
+        autostart: Some(AutostartMode::User),
         ..base
     })
     .expect("menu builds");
-    assert!(enabled.autostart.is_enabled());
-    assert!(enabled.autostart.is_checked());
+    assert!(user.autostart_user.is_enabled());
+    assert!(user.autostart_user.is_checked());
+    assert!(!user.autostart_off.is_checked());
+    assert!(!user.autostart_admin.is_checked());
+}
+
+#[test]
+fn three_way_autostart_group_checks_mode() {
+    for state in [
+        AutostartMode::Off,
+        AutostartMode::User,
+        AutostartMode::Admin,
+    ] {
+        let cfg = test_cfg();
+        let base = MenuState {
+            cfg: &cfg,
+            devices: &[],
+            default_id: None,
+            inputs: &[],
+            default_input_id: None,
+            muted: false,
+            autostart: Some(state),
+            ui_lang: Lang::En,
+        };
+        let handles = build_menu(&base).expect("menu builds");
+        assert_eq!(
+            handles.autostart_off.is_checked(),
+            state == AutostartMode::Off
+        );
+        assert_eq!(
+            handles.autostart_user.is_checked(),
+            state == AutostartMode::User
+        );
+        assert_eq!(
+            handles.autostart_admin.is_checked(),
+            state == AutostartMode::Admin
+        );
+    }
+}
+
+#[test]
+fn sync_state_updates_autostart_group_in_place() {
+    let cfg = test_cfg();
+    let base = MenuState {
+        cfg: &cfg,
+        devices: &[],
+        default_id: None,
+        inputs: &[],
+        default_input_id: None,
+        muted: false,
+        autostart: Some(AutostartMode::Off),
+        ui_lang: Lang::En,
+    };
+    let mut handles = build_menu(&base).expect("menu builds");
+    // Mode changes are in-place: the device list is untouched, so the menu must
+    // not be rebuilt (which would close it under the user's cursor).
+    assert!(handles.sync_state(&MenuState {
+        autostart: Some(AutostartMode::Admin),
+        ..base
+    }));
+    assert!(handles.autostart_admin.is_checked());
+    assert!(!handles.autostart_off.is_checked());
 }
 
 #[test]
@@ -163,7 +229,7 @@ fn sync_state_updates_checks_in_place() {
         inputs: &[],
         default_input_id: None,
         muted: false,
-        autostart: &AutostartState::Disabled,
+        autostart: Some(AutostartMode::Off),
         ui_lang: ui,
     };
     let mut handles = build_menu(&base).expect("menu builds");
@@ -186,7 +252,7 @@ fn sync_state_rebuilds_on_rename_reorder_and_lang() {
         inputs: &[],
         default_input_id: None,
         muted: false,
-        autostart: &AutostartState::Disabled,
+        autostart: Some(AutostartMode::Off),
         ui_lang: ui,
     };
     let mut handles = build_menu(&base).expect("menu builds");
@@ -234,7 +300,7 @@ fn sync_state_tracks_input_devices() {
         inputs: &inputs,
         default_input_id: Some("m1"),
         muted: false,
-        autostart: &AutostartState::Disabled,
+        autostart: Some(AutostartMode::Off),
         ui_lang: ui,
     };
     let mut handles = build_menu(&base).expect("menu builds");
@@ -266,7 +332,7 @@ fn hotkey_settings_entry_follows_sound_settings() {
         inputs: &[],
         default_input_id: None,
         muted: false,
-        autostart: &AutostartState::Disabled,
+        autostart: Some(AutostartMode::Off),
         ui_lang: Lang::En,
     };
     for ui_lang in [Lang::En, Lang::Zh] {
@@ -304,7 +370,7 @@ fn hotkey_config_change_keeps_menu_in_place() {
         inputs: &[],
         default_input_id: None,
         muted: false,
-        autostart: &AutostartState::Disabled,
+        autostart: Some(AutostartMode::Off),
         ui_lang: ui,
     };
     let mut handles = build_menu(&base).expect("menu builds");
@@ -333,7 +399,7 @@ fn empty_enumeration_shows_placeholder() {
         inputs: &[],
         default_input_id: None,
         muted: false,
-        autostart: &AutostartState::Disabled,
+        autostart: Some(AutostartMode::Off),
         ui_lang: Lang::En,
     };
     let empty = build_menu(&base).expect("menu builds");

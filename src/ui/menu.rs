@@ -10,7 +10,7 @@ use muda::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 
 use crate::audio::AudioDevice;
 use crate::config::{AppConfig, Lang};
-use crate::platform::AutostartState;
+use crate::platform::AutostartMode;
 use crate::ui::i18n::tr;
 use crate::ui::label::{MAX_LABEL_CHARS, truncate_label};
 
@@ -29,29 +29,23 @@ pub mod id {
     pub const TITLE: &str = "title";
     /// Manual device-list refresh (sleep-resume/callback-loss fallback).
     pub const REFRESH: &str = "refresh";
-    /// Toggle global mute.
     pub const MUTE: &str = "mute";
-    /// Toggle volume-limit enabled.
     pub const VOL_ENABLED: &str = "vol_enabled";
-    /// Open volume mixer.
     pub const OPEN_MIXER: &str = "open_mixer";
-    /// Open sound settings.
     pub const OPEN_SOUND: &str = "open_sound";
-    /// Open the config folder for manual hotkey editing.
     pub const OPEN_HOTKEY_SETTINGS: &str = "open_hotkey_settings";
-    /// Toggle autostart.
+    /// Frozen tail id: a submenu id never fires an action, so it keeps its
+    /// original name. Same contract as the `lang_*` items.
     pub const AUTOSTART: &str = "autostart";
-    /// Language submenu (frozen tail id, same contract as the lang_* items).
+    pub const AUTOSTART_OFF: &str = "autostart_off";
+    pub const AUTOSTART_USER: &str = "autostart_user";
+    pub const AUTOSTART_ADMIN: &str = "autostart_admin";
+    /// Frozen tail id, same contract as the `lang_*` items.
     pub const LANGUAGE: &str = "language";
-    /// Follow the system language.
     pub const LANG_SYSTEM: &str = "lang_system";
-    /// Switch language to Chinese.
     pub const LANG_ZH: &str = "lang_zh";
-    /// Switch language to English.
     pub const LANG_EN: &str = "lang_en";
-    /// Open about URL.
     pub const ABOUT: &str = "about";
-    /// Exit process.
     pub const EXIT: &str = "exit";
     /// Grayed placeholder shown when no endpoint was enumerated at all.
     pub const NO_DEVICES: &str = "no_devices";
@@ -90,54 +84,47 @@ pub fn title_text() -> String {
 /// applied in place via [`MenuHandles::sync_state`] instead of rebuilding
 /// the whole menu tree.
 pub struct MenuHandles {
-    /// The root menu attached to the tray.
     pub menu: Menu,
-    /// Per-device items keyed by sanitized device id plus the display name
-    /// used at build time (rename detection).
+    /// Keyed by sanitized device id plus the display name used at build time
+    /// (rename detection).
     device_items: Vec<(String, String, CheckMenuItem)>,
-    /// Per-input-device items, same keying as [`Self::device_items`].
+    /// Same keying as [`Self::device_items`].
     input_items: Vec<(String, String, CheckMenuItem)>,
-    /// Language mode (`System`/`Zh`/`En`) labels were built for.
+    /// Language mode the labels were built for, distinct from `lang_ui`.
     lang_mode: Lang,
     /// Effective language labels were rendered in.
     lang_ui: Lang,
-    /// Global mute toggle.
     mute: CheckMenuItem,
-    /// Volume-limit enabled toggle.
     vol_enabled: CheckMenuItem,
-    /// Volume-limit presets `(percent, item)`.
     vol_items: Vec<(u32, CheckMenuItem)>,
-    /// Autostart toggle (grayed when the state is `Unknown`).
-    autostart: CheckMenuItem,
-    /// Language mode switches (three-way group, exactly one checked).
+    /// Title flips to the unknown wording when the state cannot be read.
+    autostart: Submenu,
+    autostart_off: CheckMenuItem,
+    autostart_user: CheckMenuItem,
+    autostart_admin: CheckMenuItem,
     lang_system: CheckMenuItem,
-    /// Language switches.
     lang_zh: CheckMenuItem,
-    /// Language switches.
     lang_en: CheckMenuItem,
 }
 
 /// Snapshot of everything the menu renders, built once per pump tick.
 ///
 /// Groups the eight `build_menu`/`sync_state` inputs so the tray boundary
-/// stays a two-argument call. All fields are `Copy` (shared refs and flags),
-/// so tests can derive variants with struct-update syntax (`..base`).
+/// stays a two-argument call. All fields are `Copy` (shared refs, the mode and
+/// flags), so tests can derive variants with struct-update syntax (`..base`).
 pub struct MenuState<'a> {
-    /// Persisted config (volume-limit checks, language mode).
     pub cfg: &'a AppConfig,
-    /// Output devices.
     pub devices: &'a [AudioDevice],
-    /// Active output device id (shown checked).
+    /// Shown checked.
     pub default_id: Option<&'a str>,
-    /// Input devices.
     pub inputs: &'a [AudioDevice],
-    /// Active input device id (shown checked).
+    /// Shown checked.
     pub default_input_id: Option<&'a str>,
-    /// Global mute toggle state.
     pub muted: bool,
-    /// Autostart toggle state (`Unknown` renders grayed, never off).
-    pub autostart: &'a AutostartState,
-    /// Effective language labels render in; checks follow `cfg.lang`.
+    /// The installed mode, or `None` when the read failed (renders the group
+    /// grayed, never off).
+    pub autostart: Option<AutostartMode>,
+    /// Labels render in this language; checks follow `cfg.lang`.
     pub ui_lang: Lang,
 }
 
@@ -147,25 +134,22 @@ impl MenuHandles {
         id.replace(['\0', '\n', '\r'], "_")
     }
 
-    /// Apply the autostart state to the toggle: `Unknown` is grayed with a
-    /// status note in the label (muda has no tooltip API), never default-off.
-    fn apply_autostart(&self, autostart: &AutostartState, ui_lang: Lang) {
-        match autostart {
-            AutostartState::Enabled => {
-                self.autostart.set_text(tr("autostart", ui_lang));
-                self.autostart.set_enabled(true);
-                self.autostart.set_checked(true);
-            }
-            AutostartState::Disabled => {
-                self.autostart.set_text(tr("autostart", ui_lang));
-                self.autostart.set_enabled(true);
-                self.autostart.set_checked(false);
-            }
-            AutostartState::Unknown(_) => {
-                self.autostart.set_text(tr("autostart_unknown", ui_lang));
-                self.autostart.set_enabled(false);
-                self.autostart.set_checked(false);
-            }
+    /// Apply the autostart state to the three-way group: an unreadable state
+    /// grays every entry and marks the submenu title (muda has no tooltip API),
+    /// never falling back to "off".
+    fn apply_autostart(&self, mode: Option<AutostartMode>, ui_lang: Lang) {
+        self.autostart.set_text(if mode.is_some() {
+            tr("autostart", ui_lang)
+        } else {
+            tr("autostart_unknown", ui_lang)
+        });
+        for (item, candidate) in [
+            (&self.autostart_off, AutostartMode::Off),
+            (&self.autostart_user, AutostartMode::User),
+            (&self.autostart_admin, AutostartMode::Admin),
+        ] {
+            item.set_enabled(mode.is_some());
+            item.set_checked(mode == Some(candidate));
         }
     }
 
@@ -261,7 +245,7 @@ fn sync_entries(
 /// Build the tray menu for `state`.
 ///
 /// `default_id` is the currently active device; it is shown checked.
-/// `autostart` renders the toggle (`Unknown` grayed); `ui_lang` is the
+/// `autostart` renders the three-way group (`None` grayed); `ui_lang` is the
 /// effective language labels render in while checks follow `cfg.lang`.
 ///
 /// # Errors
@@ -329,18 +313,39 @@ pub fn build_menu(state: &MenuState<'_>) -> Result<MenuHandles, muda::Error> {
         true,
         None,
     );
-    let (autostart_label, autostart_enabled, autostart_checked) = match autostart {
-        AutostartState::Enabled => (tr("autostart", ui_lang), true, true),
-        AutostartState::Disabled => (tr("autostart", ui_lang), true, false),
-        AutostartState::Unknown(_) => (tr("autostart_unknown", ui_lang), false, false),
+    let autostart_enabled = autostart.is_some();
+    let autostart_title = if autostart_enabled {
+        tr("autostart", ui_lang)
+    } else {
+        tr("autostart_unknown", ui_lang)
     };
-    let autostart_item = CheckMenuItem::with_id(
-        id::AUTOSTART,
-        autostart_label,
+    let autostart_off = CheckMenuItem::with_id(
+        id::AUTOSTART_OFF,
+        tr("autostart_off", ui_lang),
         autostart_enabled,
-        autostart_checked,
+        autostart == Some(AutostartMode::Off),
         None,
     );
+    let autostart_user = CheckMenuItem::with_id(
+        id::AUTOSTART_USER,
+        tr("autostart_user", ui_lang),
+        autostart_enabled,
+        autostart == Some(AutostartMode::User),
+        None,
+    );
+    let autostart_admin = CheckMenuItem::with_id(
+        id::AUTOSTART_ADMIN,
+        tr("autostart_admin", ui_lang),
+        autostart_enabled,
+        autostart == Some(AutostartMode::Admin),
+        None,
+    );
+    let autostart_sub = Submenu::with_id_and_items(
+        id::AUTOSTART,
+        autostart_title,
+        true,
+        &[&autostart_off, &autostart_user, &autostart_admin],
+    )?;
     let lang_system = CheckMenuItem::with_id(
         id::LANG_SYSTEM,
         tr("system", ui_lang),
@@ -406,7 +411,7 @@ pub fn build_menu(state: &MenuState<'_>) -> Result<MenuHandles, muda::Error> {
     menu.append(&open_hotkey_settings)?;
     menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&refresh)?;
-    menu.append(&autostart_item)?;
+    menu.append(&autostart_sub)?;
     menu.append(&lang_sub)?;
     menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&about)?;
@@ -425,7 +430,10 @@ pub fn build_menu(state: &MenuState<'_>) -> Result<MenuHandles, muda::Error> {
             .zip(vol_items)
             .map(|(p, i)| (*p, i))
             .collect(),
-        autostart: autostart_item,
+        autostart: autostart_sub,
+        autostart_off,
+        autostart_user,
+        autostart_admin,
         lang_system,
         lang_zh,
         lang_en,

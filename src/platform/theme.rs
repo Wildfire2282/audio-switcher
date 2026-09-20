@@ -1,11 +1,8 @@
 //! Windows shell appearance read-back (theme and accent colour).
 //!
-//! The overlay mirrors Windows 11's flyout design language, so it follows the
-//! same two signals the shell itself uses: the **system** theme (the taskbar,
-//! the tray and the taskbar's own context menus follow `SystemUsesLightTheme`,
-//! not the per-app setting) and the user's accent colour.
-//!
-//! Both live in the registry, which the crate already opens for autostart, so
+//! The shell's own signals, not the per-app ones: the taskbar, the tray and
+//! their context menus follow `SystemUsesLightTheme`. Both the theme and the
+//! accent colour live in the registry the crate already opens for autostart, so
 //! this costs no new dependency and no new `windows` feature.
 
 #[cfg(windows)]
@@ -27,8 +24,6 @@ const KEY_PERSONALIZE: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes
 #[cfg(windows)]
 const KEY_DWM: &str = r"SOFTWARE\Microsoft\Windows\DWM";
 
-/// Read the current shell appearance.
-///
 /// Values that cannot be read fall back to the dark theme with no accent — the
 /// appearance the overlay had before it became theme-aware.
 pub(crate) fn appearance() -> Appearance {
@@ -113,7 +108,6 @@ fn read_dword(subkey: &str, value: &str) -> Option<u32> {
 mod tests {
     use super::*;
 
-    /// Registry values are little-endian `0xAABBGGRR`: the low byte is red.
     #[test]
     #[cfg(windows)]
     fn accent_unpacks_low_byte_first() {
@@ -123,7 +117,6 @@ mod tests {
         assert_eq!(accent_from_abgr(0xFFFF_FFFF), (0xFF, 0xFF, 0xFF));
     }
 
-    /// The reading itself must never panic, whatever this machine is set to.
     #[test]
     fn appearance_is_readable() {
         let appearance = appearance();

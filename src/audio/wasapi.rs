@@ -323,10 +323,10 @@ impl WasapiBackend {
                     let vt = pv.Anonymous.Anonymous.vt;
                     let s = if vt == VT_LPWSTR {
                         let pw = pv.Anonymous.Anonymous.Anonymous.pwszVal;
-                        if !pw.0.is_null() {
-                            pw.to_string().unwrap_or_default()
-                        } else {
+                        if pw.0.is_null() {
                             String::new()
+                        } else {
+                            pw.to_string().unwrap_or_default()
                         }
                     } else {
                         String::new()
@@ -473,27 +473,22 @@ pub struct WasapiBackend {
 }
 #[cfg(not(windows))]
 impl WasapiBackend {
-    /// Create a stub backend.
     pub fn new() -> Self {
         Self {
             cached: None,
             cache_time: None,
         }
     }
-    /// Invalidate cache (no-op on non-Windows).
     pub fn clear_cache(&mut self) {
         self.cached = None;
         self.cache_time = None;
     }
-    /// Poll device change — always false on non-Windows.
     pub fn poll_device_changed(&mut self) -> bool {
         false
     }
-    /// Fetch clamped snapshot — default on non-Windows.
     pub fn fetch_snapshot_clamped(&mut self, _cfg: &AppConfig) -> AudioSnapshot {
         AudioSnapshot::default()
     }
-    /// Get volume and mute — returns `(50, false)` on non-Windows.
     pub fn get_volume_and_mute(&self) -> Result<(u32, bool), AudioError> {
         Ok((50, false))
     }
@@ -537,7 +532,6 @@ impl AudioBackend for WasapiBackend {
         WasapiBackend::clear_cache(self);
     }
 }
-/// Stub — always false on non-Windows.
 #[cfg(not(windows))]
 pub fn take_device_changed() -> bool {
     false
