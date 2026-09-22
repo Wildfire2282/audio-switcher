@@ -112,14 +112,11 @@ impl<B: AudioBackend> App<B> {
             MenuAction::Device(dev_id) => self.set_default_output(&dev_id),
             MenuAction::InputDevice(dev_id) => self.set_default_input(&dev_id),
             MenuAction::Mute => self.toggle_mute(),
-            MenuAction::VolEnabled => {
-                self.cfg.volume_limit_enabled = !self.cfg.volume_limit_enabled;
-                self.save_and_refresh(true);
-            }
-            MenuAction::VolLimit(v) => {
-                self.cfg.volume_limit = v;
-                self.cfg.volume_limit_enabled = true;
-                self.save_and_refresh(true);
+            MenuAction::VolEnabled | MenuAction::VolLimit(_) => {
+                // The new limit applies to the volume playing now.
+                if apply_menu_config(&mut self.cfg, &mut self.ui_lang, &action) {
+                    self.save_and_refresh(true);
+                }
             }
             MenuAction::Refresh => {
                 // Manual fallback for sleep-resume/callback loss: drop caches,
@@ -146,16 +143,10 @@ impl<B: AudioBackend> App<B> {
             }
             MenuAction::Autostart(mode) => self.apply_autostart_mode(mode),
             MenuAction::LangSystem | MenuAction::LangZh | MenuAction::LangEn => {
-                // The three entries differ only in the value they store, and all
-                // three re-resolve the effective language (`System` through the
-                // OS locale, the other two to themselves).
-                self.cfg.lang = match &action {
-                    MenuAction::LangZh => Lang::Zh,
-                    MenuAction::LangEn => Lang::En,
-                    _ => Lang::System,
-                };
-                self.ui_lang = self.cfg.effective_lang();
-                self.save_and_refresh(false);
+                // The language does not touch the volume: no clamp.
+                if apply_menu_config(&mut self.cfg, &mut self.ui_lang, &action) {
+                    self.save_and_refresh(false);
+                }
             }
             MenuAction::About => {
                 if let Ok(url) = crate::ABOUT_URL.parse::<crate::platform::shell::Url>() {
@@ -304,3 +295,39 @@ impl<B: AudioBackend> App<B> {
         }
     }
 }
+
+/// Apply a menu action whose whole effect is a config field.
+///
+/// Returns whether the config changed, so the caller knows to save and
+/// re-render. Only the actions with no other effect are here — a device switch,
+/// an autostart change, a shell call or the exit would each need more than the
+/// caller's `save_and_refresh`.
+fn apply_menu_config(cfg: &mut AppConfig, ui_lang: &mut Lang, action: &MenuAction) -> bool {
+    match action {
+        MenuAction::VolEnabled => {
+            cfg.volume_limit_enabled = !cfg.volume_limit_enabled;
+        }
+        MenuAction::VolLimit(limit) => {
+            cfg.volume_limit = *limit;
+            // Choosing a preset is also how the cap is switched on: the menu has
+            // no separate "on" entry beyond the checkbox, so a preset picked
+            // while the cap is off must not look like it did nothing.
+            cfg.volume_limit_enabled = true;
+        }
+        MenuAction::LangSystem | MenuAction::LangZh | MenuAction::LangEn => {
+            cfg.lang = match action {
+                MenuAction::LangZh => Lang::Zh,
+                MenuAction::LangEn => Lang::En,
+                _ => Lang::System,
+            };
+            // Resolved together with the mode so the two cannot disagree
+            // (`System` follows the OS locale).
+            *ui_lang = cfg.effective_lang();
+        }
+        _ => return false,
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests;
