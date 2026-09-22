@@ -20,6 +20,10 @@ use crate::ui::{MenuState, TrayWrapper, WheelState};
 const TRAY_BOOT_ATTEMPTS: u32 = 3;
 /// Pause between tray-build attempts (bounded: 3 × 250ms worst case).
 const TRAY_BOOT_RETRY_WAIT: Duration = Duration::from_millis(250);
+/// Pause before retrying the wheel hook after a failed install. A failure is
+/// stable (another process holds the slot, or policy blocks it), so retrying
+/// every frame only means the warning drowns in its own repeats.
+const HOOK_RETRY_WAIT: Duration = Duration::from_secs(2);
 /// Volume percent per global-hotkey press (EarTrumpet parity: its
 /// absolute-volume shortcuts step 2).
 const HOTKEY_VOLUME_STEP: i32 = 2;

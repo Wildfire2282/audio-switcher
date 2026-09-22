@@ -12,13 +12,19 @@ use crate::platform::mouse_hook;
 use crate::platform::pump;
 use crate::ui::WheelState;
 
-use super::App;
+use super::{App, HOOK_RETRY_WAIT};
 use crate::platform::hotkey;
 
 impl<B: AudioBackend> App<B> {
     pub(super) fn maybe_install_hook(&mut self) {
-        if self.hook.is_none() && Instant::now() >= self.hook_install_at {
-            self.hook = mouse_hook::WheelHook::install();
+        if self.hook.is_some() || Instant::now() < self.hook_install_at {
+            return;
+        }
+        match mouse_hook::WheelHook::install() {
+            Some(hook) => self.hook = Some(hook),
+            // Without a new deadline the install would be retried on every
+            // frame — a hundred log lines a second while the failure lasts.
+            None => self.hook_install_at = Instant::now() + HOOK_RETRY_WAIT,
         }
     }
     /// Reset wheel acceleration so a stale burst cannot jump the volume

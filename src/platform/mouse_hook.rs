@@ -97,10 +97,17 @@ impl WheelHook {
                 use windows::Win32::UI::WindowsAndMessaging::{SetWindowsHookExW, WH_MOUSE_LL};
                 SetWindowsHookExW(WH_MOUSE_LL, Some(hook_proc), None, 0)
             };
-            hook.ok().filter(|h| !h.0.is_null()).map(|h| Self {
-                handle: h.0 as isize,
-                _marker: std::marker::PhantomData,
-            })
+            match hook {
+                Ok(h) if !h.0.is_null() => Some(Self {
+                    handle: h.0 as isize,
+                    _marker: std::marker::PhantomData,
+                }),
+                Err(e) => {
+                    tracing::warn!("mouse hook install failed: {e:?}");
+                    None
+                }
+                Ok(_) => None,
+            }
         }
         #[cfg(not(windows))]
         {
