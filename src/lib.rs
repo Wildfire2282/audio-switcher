@@ -86,15 +86,16 @@ pub mod config;
 pub(crate) mod platform;
 pub(crate) mod ui;
 // Curated re-exports for the binary entry point (`main` is a separate crate,
-// so anything it touches is `pub` with this justification).
-pub use config::{AppConfig, Lang};
+// so what it names by hand is `pub` with this justification; the error types
+// and `AppConfig`/`Lang` are reached through `config`/`platform` instead, and
+// `main` renders errors through `Display`).
 // `main` must handle the elevated autostart helper before the single-instance
 // guard (the helper is a second process by design), so this one crosses the
 // crate boundary too.
 pub use platform::autostart::run_autostart_helper_if_requested;
 pub use platform::dialog::show_critical;
 pub use platform::logging::init as init_crash_reporting;
-pub use platform::{ComError, ComGuard, InstanceError, SingleInstanceGuard};
+pub use platform::{ComGuard, SingleInstanceGuard};
 
 /// Canonical tool id (kebab-case). Single source for the mutex name, the
 /// config/log directory names, and the autostart display-name derivation.
