@@ -67,48 +67,6 @@ pub struct App<B: AudioBackend = WasapiBackend> {
     _com: crate::platform::ComGuard,
 }
 
-/// Builder for [`App`] — allows injecting a custom backend or config for tests.
-///
-/// # Examples
-///
-/// ```
-/// use audio_switcher::app::AppBuilder;
-/// use audio_switcher::ComGuard;
-/// // let com = ComGuard::init().expect("COM");
-/// // let app = AppBuilder::new(com).build().expect("tray");
-/// ```
-pub struct AppBuilder {
-    com: crate::platform::ComGuard,
-    cfg: Option<AppConfig>,
-}
-
-impl AppBuilder {
-    /// Create a builder with the given COM guard.
-    #[must_use]
-    pub fn new(com: crate::platform::ComGuard) -> Self {
-        Self { com, cfg: None }
-    }
-
-    /// Override the config (otherwise loaded from disk).
-    #[must_use]
-    pub fn config(mut self, cfg: AppConfig) -> Self {
-        self.cfg = Some(cfg);
-        self
-    }
-
-    /// Build the [`App`] with the real backend.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TrayError`] when the tray icon cannot be created; the caller
-    /// dialogs and exits (a transient Explorer absence is retried inside
-    /// `assemble` before the error propagates).
-    #[must_use = "a failed build must dialog and exit, never be ignored"]
-    pub fn build(self) -> Result<App<WasapiBackend>, TrayError> {
-        let cfg = self.cfg.unwrap_or_else(AppConfig::load);
-        App::assemble(cfg, WasapiBackend::new(), self.com)
-    }
-}
 impl App<WasapiBackend> {
     /// Create a new `App` with the real Windows audio backend.
     ///
@@ -133,8 +91,8 @@ impl<B: AudioBackend> App<B> {
         Self::assemble(cfg, backend, com)
     }
 
-    /// Single assembly path shared by [`AppBuilder::build`] and
-    /// [`with_backend`](Self::with_backend): tray, snapshot, and state init.
+    /// Single assembly path for [`with_backend`](Self::with_backend): tray,
+    /// snapshot, and state init.
     ///
     /// The tray build retries briefly: Explorer may be restarting exactly as
     /// we start. Other failures (bad icon bytes) are deterministic, so the
@@ -205,12 +163,6 @@ impl<B: AudioBackend> App<B> {
             osd,
             _com: com,
         })
-    }
-
-    /// Returns true when an exit has been requested via the tray menu.
-    #[must_use]
-    pub fn should_exit(&self) -> bool {
-        self.should_exit
     }
 
     // ---- handlers extracted to keep `run` short ----
