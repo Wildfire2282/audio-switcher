@@ -111,16 +111,6 @@ fn clamp_enabled_out_of_range_limit_still_caps_at_100() {
 }
 
 #[test]
-fn validate_custom() {
-    assert_eq!(AppConfig::validate_custom_limit("50").unwrap(), 50);
-    assert_eq!(AppConfig::validate_custom_limit("  100 ").unwrap(), 100);
-    assert!(AppConfig::validate_custom_limit("0").is_err());
-    assert!(AppConfig::validate_custom_limit("101").is_err());
-    assert!(AppConfig::validate_custom_limit("abc").is_err());
-    assert!(AppConfig::validate_custom_limit("").is_err());
-}
-
-#[test]
 fn persistence_with_tempfile() {
     let dir = tempdir().unwrap();
     let path = AppConfig::config_path_for(dir.path());

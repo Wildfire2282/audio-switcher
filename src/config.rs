@@ -630,33 +630,6 @@ impl AppConfig {
         }
         Ok(())
     }
-
-    /// Validate a custom threshold string.
-    ///
-    /// Returns `Ok(value)` for integers `1..=100`, `Err("invalid")` otherwise.
-    ///
-    /// # Errors
-    ///
-    /// `Err("invalid")` when the trimmed input is empty, is not an integer, or
-    /// falls outside `1..=100`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use audio_switcher::config::AppConfig;
-    /// assert_eq!(AppConfig::validate_custom_limit("50").unwrap(), 50);
-    /// assert!(AppConfig::validate_custom_limit("0").is_err());
-    /// ```
-    pub fn validate_custom_limit(s: &str) -> Result<u32, &'static str> {
-        let trimmed = s.trim();
-        if trimmed.is_empty() {
-            return Err("invalid");
-        }
-        match trimmed.parse::<i32>() {
-            Ok(v) if (1..=100).contains(&v) => Ok(v as u32),
-            _ => Err("invalid"),
-        }
-    }
 }
 
 /// Clamp `volume` according to `cfg`.
