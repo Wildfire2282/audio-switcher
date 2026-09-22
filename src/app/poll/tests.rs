@@ -4,9 +4,41 @@
 //! an agent changing this module reads the module, and one changing the
 //! behaviour reads this file. `use super::*` still reaches every private item.
 
-use super::wait_ms;
+use super::{DEVICE_COALESCE_WINDOW, devices_refresh_due, wait_ms};
 use crate::platform::pump::PUMP_IDLE_MS;
 use std::time::{Duration, Instant};
+
+/// A device change is reported as several notifications in quick succession, so
+/// the rebuild waits for the window — and the latch is what keeps the last one
+/// of the burst from being dropped while it waits.
+#[test]
+fn a_device_change_is_coalesced_and_never_dropped() {
+    let last = Instant::now();
+    // Nothing latched: there is nothing to rebuild for, however long ago the
+    // last rebuild was.
+    assert!(!devices_refresh_due(
+        false,
+        last,
+        last + Duration::from_secs(5)
+    ));
+    assert!(!devices_refresh_due(
+        true,
+        last,
+        last + Duration::from_millis(50)
+    ));
+    assert!(devices_refresh_due(
+        true,
+        last,
+        last + Duration::from_millis(130)
+    ));
+    // The window boundary itself counts as due: `wait_timeout` wakes exactly
+    // there, and a strict comparison would cost another pass.
+    assert!(devices_refresh_due(
+        true,
+        last,
+        last + DEVICE_COALESCE_WINDOW
+    ));
+}
 
 /// No deadline is the normal idle case: sleep the cap and let the next wake or
 /// timeout start the next pass.

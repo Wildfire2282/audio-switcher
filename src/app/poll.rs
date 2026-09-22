@@ -111,13 +111,14 @@ impl<B: AudioBackend> App<B> {
         if self.backend.poll_device_changed() {
             self.devices_pending = true;
         }
-        if !self.devices_pending {
-            return;
-        }
         // coalesce bursts: IMMNotificationClient may fire Added/Removed/DefaultChanged in quick succession.
         // The notification stays latched in `devices_pending` so the deferred
         // rebuild is not lost.
-        if self.last_devices_rebuild.elapsed() < DEVICE_COALESCE_WINDOW {
+        if !devices_refresh_due(
+            self.devices_pending,
+            self.last_devices_rebuild,
+            Instant::now(),
+        ) {
             return;
         }
         self.devices_pending = false;
@@ -188,6 +189,15 @@ impl<B: AudioBackend> App<B> {
         }
         wait_ms(Instant::now(), next)
     }
+}
+
+/// Whether a latched device change is old enough to rebuild the menu for.
+///
+/// Pure so the window can be tested without a backend. The latch is what keeps
+/// the last notification of a burst from being dropped, and the window is what
+/// turns the burst into one rebuild.
+fn devices_refresh_due(pending: bool, last: Instant, now: Instant) -> bool {
+    pending && now.saturating_duration_since(last) >= DEVICE_COALESCE_WINDOW
 }
 
 /// Milliseconds to wait for `next`, rounded up and capped at
