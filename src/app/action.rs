@@ -44,6 +44,19 @@ impl<B: AudioBackend> App<B> {
         self.cached_mute = snap.mute;
         self.cached_device.clone_from(&snap.default_device);
         self.tray.update_icon_if_changed(snap.mute);
+        self.refresh_osd_if_visible();
+    }
+
+    /// Re-render the card when it is already on screen.
+    ///
+    /// The mirror moves for reasons the card did not cause — an outside mute or
+    /// volume change, a device switch from the menu or a hotkey — and a card
+    /// showing the previous state for the rest of its two seconds contradicts
+    /// the endpoint it is reporting on.
+    fn refresh_osd_if_visible(&mut self) {
+        if self.osd_deadline.is_some() {
+            self.show_osd();
+        }
     }
 
     /// Re-read volume/mute/device after an external change (media keys, other
@@ -68,6 +81,7 @@ impl<B: AudioBackend> App<B> {
         // with the tray icon until some unrelated refresh corrects it.
         self.tray.sync_mute(self.cached_mute);
         self.tray.update_icon_if_changed(self.cached_mute);
+        self.refresh_osd_if_visible();
     }
 
     /// Show the volume overlay for the mirrored state and restart its deadline.
