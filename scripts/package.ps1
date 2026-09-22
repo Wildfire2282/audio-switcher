@@ -36,6 +36,11 @@ try {
     if (-not (Test-Path $exe)) { throw "missing $exe" }
     Write-Host "[3] built $(Split-Path -Leaf $exe)"
 
+    # The image bytes, read once: the import fallback below and the manifest
+    # check both look for a string in them.
+    $bytes = [System.IO.File]::ReadAllBytes($exe)
+    $ascii = [System.Text.Encoding]::ASCII.GetString($bytes)
+
     # ---- self-containment: no non-OS runtime dependency ----
     $banned = @("vcruntime140", "msvcp140", "ucrtbase", "api-ms-win-crt", "concrt140", "libgcc", "libstdc++")
     $dumpbin = @(
@@ -52,13 +57,22 @@ try {
         # No MSVC toolchain visible: fall back to a byte scan for the DLL names
         # a dynamically linked CRT would have to import.
         Write-Host "[4] dumpbin not found; scanning image for runtime DLL references"
-        $bytes = [System.IO.File]::ReadAllBytes($exe)
-        $ascii = [System.Text.Encoding]::ASCII.GetString($bytes)
         $bad = $banned | Where-Object { $ascii -match [regex]::Escape($_) }
     }
     if ($bad) { throw "exe still depends on non-OS runtime libraries: $($bad -join ', ')" }
 
-    Write-Host "[5] stage dist (current release only)"
+    # ---- the embedded manifest, not just the source file ----
+    # `smoke.ps1` greps `audio-switcher.manifest`; that only proves the file is
+    # right. A manifest that failed to embed would ship silently and the DPI
+    # behaviour (the overlay's per-monitor scaling) would go with it. Either
+    # encoding is accepted: the resource holds the file's own bytes.
+    Write-Host "[5] checking the embedded DPI manifest"
+    $utf16 = [System.Text.Encoding]::Unicode.GetString($bytes)
+    if (($ascii -notmatch "PerMonitorV2") -and ($utf16 -notmatch "PerMonitorV2")) {
+        throw "the packaged exe carries no PerMonitorV2 manifest"
+    }
+
+    Write-Host "[6] stage dist (current release only)"
     # Budget gate runs before staging: an oversized image must never reach dist/.
     $size = (Get-Item $exe).Length
     if ($size -gt $budget) { throw ("size {0:N0} exceeds the {1:N0}-byte budget" -f $size, $budget) }
@@ -78,7 +92,7 @@ try {
     $sum = Join-Path $dist $checksum
     [System.IO.File]::WriteAllText($sum, "$hash  $name`n")
 
-    Write-Host "[6] report"
+    Write-Host "[7] report"
     $info = (Get-Item $out).VersionInfo
     Write-Host ""
     Write-Host "artifact : $out"
