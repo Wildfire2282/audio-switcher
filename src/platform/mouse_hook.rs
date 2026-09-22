@@ -35,6 +35,27 @@ fn is_button_down(msg: u32) -> bool {
     )
 }
 
+/// Whether this thread is inside one of its own menu loops.
+///
+/// A modal menu pumps messages, so the low-level hook still runs while it is
+/// open: without this check a roll meant for the menu sits in the accumulator
+/// and then changes the volume, late, when the menu closes.
+#[cfg(windows)]
+fn in_menu_mode() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GUI_INMENUMODE, GUITHREADINFO, GUITHREADINFO_FLAGS, GetGUIThreadInfo,
+    };
+    let mut info = GUITHREADINFO {
+        cbSize: u32::try_from(std::mem::size_of::<GUITHREADINFO>()).unwrap_or(0),
+        ..Default::default()
+    };
+    // SAFETY: `GetGUIThreadInfo` writes a POD out-parameter sized by `cbSize`;
+    // a null thread id asks about the calling thread, which is where the hook
+    // procedure runs.
+    let queried = unsafe { GetGUIThreadInfo(0, &raw mut info) }.is_ok();
+    queried && info.flags & GUI_INMENUMODE != GUITHREADINFO_FLAGS(0)
+}
+
 /// Low-level mouse hook procedure: harvests wheel deltas and button presses,
 /// forwards everything.
 ///
@@ -53,13 +74,15 @@ unsafe extern "system" fn hook_proc(
     if n_code >= 0 {
         let msg = w_param.0 as u32;
         if msg == WM_MOUSEWHEEL {
-            // SAFETY: per Win32 contract l_param points to MSLLHOOKSTRUCT
-            let info = unsafe { &*(l_param.0 as *const MSLLHOOKSTRUCT) };
-            #[allow(clippy::cast_possible_wrap, clippy::cast_lossless)]
-            let delta = (info.mouseData >> 16) as u16 as i16 as i32;
-            // Release ordering pairs with Acquire in the consumer (take_wheel_event).
-            WHEEL_DELTA.fetch_add(delta, Ordering::AcqRel);
-            WHEEL_PENDING.store(true, Ordering::Release);
+            if !in_menu_mode() {
+                // SAFETY: per Win32 contract l_param points to MSLLHOOKSTRUCT
+                let info = unsafe { &*(l_param.0 as *const MSLLHOOKSTRUCT) };
+                #[allow(clippy::cast_possible_wrap, clippy::cast_lossless)]
+                let delta = (info.mouseData >> 16) as u16 as i16 as i32;
+                // Release ordering pairs with Acquire in the consumer (take_wheel_event).
+                WHEEL_DELTA.fetch_add(delta, Ordering::AcqRel);
+                WHEEL_PENDING.store(true, Ordering::Release);
+            }
         } else if is_button_down(msg) {
             // Only "a click happened" is needed to dismiss the overlay, so one
             // flag serves every button. Release ordering pairs with Acquire in
