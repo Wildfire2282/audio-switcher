@@ -258,7 +258,27 @@ impl<B: AudioBackend> App<B> {
                 return;
             }
         }
+        // Without this the gesture is silent feedback: the card moves and
+        // nothing is audible, because the endpoint is still muted.
+        if lifts_mute(delta, self.cached_mute) {
+            self.lift_mute();
+        }
         self.show_osd();
+    }
+
+    /// Clear mute for a volume-up gesture.
+    ///
+    /// A failure leaves the mirror alone: the icon and the menu check keep
+    /// showing muted, which is then still true.
+    fn lift_mute(&mut self) {
+        if let Err(e) = self.backend.set_mute(false) {
+            tracing::warn!("set_mute failed while raising the volume: {e}");
+            return;
+        }
+        self.cached_mute = false;
+        // Both mute read-outs, as in `toggle_mute`.
+        self.tray.sync_mute(false);
+        self.tray.update_icon_if_changed(false);
     }
 
     /// Switch to the default output `step` positions away, wrapping at both
@@ -294,6 +314,15 @@ impl<B: AudioBackend> App<B> {
             HotkeyAction::PrevDevice => self.cycle_device(-1),
         }
     }
+}
+
+/// Whether a volume gesture lifts mute.
+///
+/// Measured against the shell's own volume keys (which the tray wheel is the
+/// same gesture as): volume-up clears mute, volume-down leaves it — asking for
+/// less sound is not asking for sound.
+fn lifts_mute(delta: i32, muted: bool) -> bool {
+    delta > 0 && muted
 }
 
 /// Apply a menu action whose whole effect is a config field.

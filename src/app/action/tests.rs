@@ -47,6 +47,17 @@ fn the_volume_limit_entries_store_the_preset_and_the_cap() {
     assert_eq!(clamp_volume(80, &cfg), 80, "off means uncapped");
 }
 
+/// The mute rule, taken from the shell's own volume keys: up lifts mute, down
+/// leaves it, and neither does anything while already unmuted.
+#[test]
+fn only_a_volume_up_gesture_lifts_mute() {
+    assert!(lifts_mute(1, true));
+    assert!(lifts_mute(HOTKEY_VOLUME_STEP, true));
+    assert!(!lifts_mute(-1, true));
+    assert!(!lifts_mute(-HOTKEY_VOLUME_STEP, true));
+    assert!(!lifts_mute(HOTKEY_VOLUME_STEP, false));
+}
+
 /// The three language entries store the mode and the resolved UI language
 /// together: a stale `ui_lang` would render the menu in the previous language.
 #[test]
