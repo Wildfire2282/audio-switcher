@@ -6,9 +6,9 @@
 //! entry, `WM_NCHITTEST`, show/hide). A colour or geometry change reads this
 //! file alone; a "the overlay never appears" bug reads `win`.
 //!
-//! Every GDI object created here is released here: `Buffer` and `Selected`
-//! own that bookkeeping so no call site repeats it, and Windows refuses to
-//! delete an object that is still selected into a DC.
+//! Every GDI object created here is released here: `Buffer`, `Selected` and
+//! `PaintCache` own that bookkeeping so no call site repeats it, and Windows
+//! refuses to delete an object that is still selected into a DC.
 //!
 //! Threading: paint only, on the message-loop thread. The caches below are
 //! per-thread (`STYLE` is also seeded by `osd/win/tests.rs`).
@@ -23,9 +23,9 @@ use windows::Win32::Graphics::Gdi::{
     BitBlt, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, CreateCompatibleBitmap, CreateCompatibleDC,
     CreateFontIndirectW, CreateFontW, CreatePen, CreateSolidBrush, DEFAULT_CHARSET, DT_CALCRECT,
     DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, DeleteDC,
-    DeleteObject, DrawTextW, Ellipse, FW_NORMAL, FillRect, GetStockObject, HBITMAP, HDC, HFONT,
-    HGDIOBJ, LOGFONTW, NULL_BRUSH, NULL_PEN, OUT_DEFAULT_PRECIS, PS_SOLID, RoundRect, SRCCOPY,
-    SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    DeleteObject, DrawTextW, Ellipse, FW_NORMAL, FillRect, GetStockObject, HBITMAP, HBRUSH, HDC,
+    HFONT, HGDIOBJ, HPEN, LOGFONTW, NULL_BRUSH, NULL_PEN, OUT_DEFAULT_PRECIS, PS_SOLID, RoundRect,
+    SRCCOPY, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
@@ -56,6 +56,12 @@ thread_local! {
     /// Each `DrawTextW`/`DT_CALCRECT` call used to allocate its own `Vec`, four
     /// times per painted card, on a path that runs once per wheel notch.
     static WIDE_BUF: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
+    /// Font, brushes and pen the card is drawn with.
+    ///
+    /// Every one of them is a pure function of the palette and the DPI, and the
+    /// card is repainted once per wheel notch: creating them per paint spent
+    /// eight GDI objects a notch to produce the same eight objects.
+    static PAINT_CACHE: RefCell<Option<PaintCache>> = const { RefCell::new(None) };
 }
 
 /// Encode `text` into the shared buffer and hand it to `f`.
@@ -72,15 +78,17 @@ fn with_wide<R>(text: &str, f: impl FnOnce(&mut [u16]) -> R) -> R {
     })
 }
 
-/// Drop the cached tokens and font.
+/// Drop the cached tokens, font and paint objects.
 ///
 /// The shell reports theme, accent and settings changes through the same window
-/// message, so both are invalidated together — from the window half, which owns
-/// that message. Keeping it a call instead of two pokes leaves the caches owned
-/// by this file.
+/// message, so all three are invalidated together — from the window half, which
+/// owns that message. Keeping it a call instead of three pokes leaves the caches
+/// owned by this file.
 pub(super) fn invalidate_appearance() {
     STYLE.with(|slot| slot.set(None));
     MENU_FONT.with(|slot| slot.set(Cached::Pending));
+    // Replacing the entry is what releases its GDI objects.
+    PAINT_CACHE.with(|slot| *slot.borrow_mut() = None);
 }
 
 /// Design tokens for the current shell appearance.
@@ -133,19 +141,15 @@ fn query_menu_font() -> Option<LOGFONTW> {
     }
 }
 
-/// Create the card's font and select it into `dc`.
+/// Create the card's font, owned by the caller.
 ///
 /// Prefers the shell's own menu font, so the card reads as one more menu in
 /// the same language — and so a user-chosen menu font size is honoured
 /// automatically. That face is accepted whatever it names, because on a
 /// non-Latin system it is the correct one.
-///
-/// Returns the font, always owned by the caller, and the object it replaced
-/// in `dc`.
-fn select_card_font(dc: HDC, dpi: i32) -> (HFONT, HGDIOBJ) {
-    // SAFETY: `dc` is live, and every `LOGFONTW` handed to GDI below is
-    // fully initialized.
-    let font = unsafe {
+fn card_font(dpi: i32) -> HFONT {
+    // SAFETY: every `LOGFONTW` handed to GDI below is fully initialized.
+    unsafe {
         match menu_font() {
             // Already sized for the system DPI, so not scaled again.
             Some(logfont) => CreateFontIndirectW(&raw const logfont),
@@ -169,10 +173,7 @@ fn select_card_font(dc: HDC, dpi: i32) -> (HFONT, HGDIOBJ) {
                 w!("Segoe UI"),
             ),
         }
-    };
-    // SAFETY: `dc` is live and `font` was just created.
-    let previous = unsafe { SelectObject(dc, HGDIOBJ(font.0)) };
-    (font, previous)
+    }
 }
 
 /// Width of `text` in physical pixels under the font currently in `dc`.
@@ -181,8 +182,9 @@ fn select_card_font(dc: HDC, dpi: i32) -> (HFONT, HGDIOBJ) {
 fn text_width(dc: HDC, text: &str) -> i32 {
     with_wide(text, |buf| {
         let mut rect = RECT::default();
-        // SAFETY: `dc` is live with the card font selected, `buf` is
-        // NUL-terminated, and `DT_CALCRECT` makes `rect` the measured box.
+        // SAFETY: `dc` is live with the card font selected, `buf` is sized for
+        // `DrawTextW`'s character count, and `DT_CALCRECT` makes `rect` the
+        // measured box.
         let _ = unsafe {
             DrawTextW(
                 dc,
@@ -195,26 +197,20 @@ fn text_width(dc: HDC, text: &str) -> i32 {
     })
 }
 
-/// GDI objects backing one card.
+/// The per-card GDI objects: an off-screen device context and its bitmap.
 ///
-/// Created in one `unsafe` block and released on drop in another, so no safe
-/// layout logic has to sit inside `unsafe` while every object is still released
-/// exactly once — including when the paint returns early.
+/// The font, brushes and pen are [`PaintCache`]'s, because they outlive one
+/// card. Created in one `unsafe` block and released on drop in another, so no
+/// safe layout logic has to sit inside `unsafe` while every object is still
+/// released exactly once — including when the paint returns early.
 struct Buffer {
     dc: HDC,
     bmp: HBITMAP,
     old_bmp: HGDIOBJ,
-    font: HFONT,
-    old_font: HGDIOBJ,
-    /// Width reserved for the state read-out, in physical pixels.
-    ///
-    /// Sized for the widest read-out the language can produce rather than
-    /// for the text on screen, so the slider keeps one length.
-    state_col: i32,
 }
 
 impl Buffer {
-    /// Create the buffer DC, its bitmap and the card's font.
+    /// Create the buffer DC and its bitmap.
     ///
     /// `None` when GDI refuses one of them: painting a blank card and saying
     /// nothing left the failure invisible. Everything created before the
@@ -223,9 +219,9 @@ impl Buffer {
     /// # Safety
     ///
     /// `hdc` must be a live device context.
-    unsafe fn new(hdc: HDC, w: i32, h: i32, dpi: i32, content: &OsdContent) -> Option<Self> {
-        // SAFETY: the caller guarantees `hdc` is live; every handle is
-        // checked for null before it is selected into the DC or released.
+    unsafe fn new(hdc: HDC, w: i32, h: i32) -> Option<Self> {
+        // SAFETY: the caller guarantees `hdc` is live; every handle is checked
+        // for null before it is selected into the DC or released.
         unsafe {
             let dc = CreateCompatibleDC(Some(hdc));
             if dc.0.is_null() {
@@ -239,44 +235,120 @@ impl Buffer {
                 return None;
             }
             let old_bmp = SelectObject(dc, HGDIOBJ(bmp.0));
-            let (font, old_font) = select_card_font(dc, dpi);
-            if font.0.is_null() {
-                // The bitmap has to come back out before it can be deleted.
-                SelectObject(dc, old_bmp);
-                let _ = DeleteObject(HGDIOBJ(bmp.0));
-                let _ = DeleteDC(dc);
-                tracing::warn!("osd: GDI allocation failed: card font");
-                return None;
-            }
             let _ = SetBkMode(dc, TRANSPARENT);
-            // Reserve the column for the widest read-out this language can
-            // show, never for the text on screen: measuring that made the
-            // slider shorten as the read-out grew (`5%` → `50%` → `100%`).
-            let state_col =
-                text_width(dc, WIDEST_PERCENT).max(text_width(dc, &content.muted_label));
-            Some(Self {
-                dc,
-                bmp,
-                old_bmp,
-                font,
-                old_font,
-                state_col,
-            })
+            Some(Self { dc, bmp, old_bmp })
         }
     }
 }
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        // SAFETY: every handle came out of `Buffer::new` and is still live.
-        // Both owned objects are selected out before they are deleted, which
-        // Windows requires; the restored stock objects are not ours to delete.
+        // SAFETY: the handle came out of `Buffer::new` and is still live. The
+        // bitmap is selected out before it is deleted, which Windows requires;
+        // the restored stock object is not ours to delete.
         unsafe {
-            SelectObject(self.dc, self.old_font);
             SelectObject(self.dc, self.old_bmp);
-            let _ = DeleteObject(HGDIOBJ(self.font.0));
             let _ = DeleteObject(HGDIOBJ(self.bmp.0));
             let _ = DeleteDC(self.dc);
+        }
+    }
+}
+
+/// The card's font, brushes and pen, created once per appearance and DPI.
+///
+/// Owns every handle it holds: dropping it releases them, which is also how a
+/// theme change frees the objects for the old palette.
+struct PaintCache {
+    /// The palette these objects were built from; a different one rebuilds.
+    tokens: Palette,
+    /// The DPI the font size and pen width were scaled for.
+    dpi: i32,
+    font: HFONT,
+    key: HBRUSH,
+    card: HBRUSH,
+    border: HPEN,
+    track: HBRUSH,
+    fill: HBRUSH,
+    muted_fill: HBRUSH,
+    /// The `muted_label` the reserved column was measured against, and its
+    /// width: the measurement is per label, not per paint.
+    state_label: String,
+    state_col: i32,
+}
+
+impl PaintCache {
+    /// Create the card's font, brushes and pen, or `None` when GDI refuses one.
+    ///
+    /// # Safety
+    ///
+    /// The returned cache owns every handle; each is released by [`Drop`].
+    unsafe fn new(tokens: Palette, dpi: i32) -> Option<Self> {
+        // SAFETY: plain GDI object creation; every handle is either stored here
+        // or released by the `Drop` that runs as this value is discarded.
+        unsafe {
+            let cache = Self {
+                tokens,
+                dpi,
+                font: card_font(dpi),
+                key: CreateSolidBrush(rgb(KEY_RGB)),
+                card: CreateSolidBrush(rgb(tokens.card)),
+                border: CreatePen(PS_SOLID, scale(1, dpi).max(1), rgb(tokens.border)),
+                track: CreateSolidBrush(rgb(tokens.track)),
+                fill: CreateSolidBrush(rgb(tokens.fill)),
+                muted_fill: CreateSolidBrush(rgb(tokens.muted_fill)),
+                state_label: String::new(),
+                state_col: 0,
+            };
+            let complete = !cache.font.0.is_null()
+                && !cache.key.0.is_null()
+                && !cache.card.0.is_null()
+                && !cache.border.0.is_null()
+                && !cache.track.0.is_null()
+                && !cache.fill.0.is_null()
+                && !cache.muted_fill.0.is_null();
+            if !complete {
+                tracing::warn!("osd: GDI allocation failed: card font or brush");
+                return None;
+            }
+            Some(cache)
+        }
+    }
+
+    /// Width reserved for the state read-out, measured once per label.
+    ///
+    /// Sized for the widest read-out the language can produce rather than for
+    /// the text on screen: measuring that made the slider shorten as the
+    /// read-out grew (`5%` → `50%` → `100%`). `dc` must have this cache's font
+    /// selected.
+    fn state_col(&mut self, dc: HDC, label: &str) -> i32 {
+        if self.state_label != label {
+            self.state_col = text_width(dc, WIDEST_PERCENT).max(text_width(dc, label));
+            self.state_label.clear();
+            self.state_label.push_str(label);
+        }
+        self.state_col
+    }
+}
+
+impl Drop for PaintCache {
+    fn drop(&mut self) {
+        // SAFETY: each handle came from the matching create call in `new` and is
+        // deleted exactly once, here. A null handle (a create that failed on the
+        // way to the `None` above) is skipped.
+        unsafe {
+            for handle in [
+                HGDIOBJ(self.font.0),
+                HGDIOBJ(self.key.0),
+                HGDIOBJ(self.card.0),
+                HGDIOBJ(self.border.0),
+                HGDIOBJ(self.track.0),
+                HGDIOBJ(self.fill.0),
+                HGDIOBJ(self.muted_fill.0),
+            ] {
+                if !handle.0.is_null() {
+                    let _ = DeleteObject(handle);
+                }
+            }
         }
     }
 }
@@ -338,125 +410,137 @@ pub(super) fn draw_card(hdc: HDC, content: &OsdContent, dpi: i32) {
     let h = scale(CARD_H, dpi);
     let radius = scale(RADIUS, dpi) * 2;
     let pill = scale(BAR_H, dpi);
-    let hairline = scale(1, dpi).max(1);
 
     // SAFETY: `hdc` is a live DC from the caller; `Buffer` releases every
     // object it created when it goes out of scope on every path below.
-    let Some(buf) = (unsafe { Buffer::new(hdc, w, h, dpi, content) }) else {
+    let Some(buf) = (unsafe { Buffer::new(hdc, w, h) }) else {
         return;
     };
 
-    let l = layout::layout(w, h, dpi, buf.state_col, content);
-
-    // SAFETY: `buf` owns live GDI objects created above. Each `Selected`
-    // guard restores and releases exactly the object it selected, so nothing
-    // is released while still selected; the buffer's own objects are released
-    // by its `Drop` when this function returns.
-    unsafe {
-        // Everything outside the rounded card stays the colour key, which
-        // the layered window keys out, so the corners are transparent rather
-        // than showing a square backing.
-        let key = CreateSolidBrush(rgb(KEY_RGB));
-        FillRect(
-            buf.dc,
-            &RECT {
-                left: 0,
-                top: 0,
-                right: w,
-                bottom: h,
-            },
-            key,
-        );
-        let _ = DeleteObject(HGDIOBJ(key.0));
-
-        // Card fill, no outline.
+    PAINT_CACHE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        // A theme change (new palette) or a move to another monitor (new DPI)
+        // rebuilds: the old objects are released by the replacement.
+        if slot
+            .as_ref()
+            .is_none_or(|cache| cache.tokens != tokens || cache.dpi != dpi)
         {
-            let card = CreateSolidBrush(rgb(tokens.card));
-            let _pen = Selected::new(buf.dc, GetStockObject(NULL_PEN), false);
-            let _brush = Selected::new(buf.dc, HGDIOBJ(card.0), true);
-            let _ = RoundRect(buf.dc, 0, 0, w, h, radius, radius);
+            // SAFETY: `PaintCache::new` only creates GDI objects and takes no
+            // pointers; the returned cache owns them.
+            *slot = unsafe { PaintCache::new(tokens, dpi) };
         }
+        let Some(cache) = slot.as_mut() else {
+            return;
+        };
 
-        // Hairline stroke, drawn one pixel inside the fill so the right and
-        // bottom edges are not clipped away at the client boundary.
-        {
-            let border = CreatePen(PS_SOLID, hairline, rgb(tokens.border));
-            let _pen = Selected::new(buf.dc, HGDIOBJ(border.0), true);
-            let _brush = Selected::new(buf.dc, GetStockObject(NULL_BRUSH), false);
-            let _ = RoundRect(buf.dc, 0, 0, w - 1, h - 1, radius, radius);
-        }
+        // SAFETY: `buf.dc` is live and every handle passed to `Selected` belongs
+        // to `cache`, which outlives the paint: `false` means "do not release".
+        unsafe {
+            let _font = Selected::new(buf.dc, HGDIOBJ(cache.font.0), false);
+            let state_col = cache.state_col(buf.dc, &content.muted_label);
+            let l = layout::layout(w, h, dpi, state_col, content);
 
-        // Slider track.
-        {
-            let track = CreateSolidBrush(rgb(tokens.track));
-            let _brush = Selected::new(buf.dc, HGDIOBJ(track.0), true);
-            let _ = RoundRect(
+            // Everything outside the rounded card stays the colour key, which
+            // the layered window keys out, so the corners are transparent rather
+            // than showing a square backing.
+            FillRect(
                 buf.dc,
-                l.bar_track.left,
-                l.bar_track.top,
-                l.bar_track.right,
-                l.bar_track.bottom,
-                pill,
-                pill,
+                &RECT {
+                    left: 0,
+                    top: 0,
+                    right: w,
+                    bottom: h,
+                },
+                cache.key,
             );
-        }
 
-        // Filled portion and thumb, both in the accent (neutral while muted).
-        {
-            let level = CreateSolidBrush(rgb(if content.muted {
-                tokens.muted_fill
-            } else {
-                tokens.fill
-            }));
-            let _brush = Selected::new(buf.dc, HGDIOBJ(level.0), true);
-            if l.bar_fill.right > l.bar_fill.left {
+            // Card fill, no outline.
+            {
+                let _pen = Selected::new(buf.dc, GetStockObject(NULL_PEN), false);
+                let _brush = Selected::new(buf.dc, HGDIOBJ(cache.card.0), false);
+                let _ = RoundRect(buf.dc, 0, 0, w, h, radius, radius);
+            }
+
+            // Hairline stroke, drawn one pixel inside the fill so the right and
+            // bottom edges are not clipped away at the client boundary.
+            {
+                let _pen = Selected::new(buf.dc, HGDIOBJ(cache.border.0), false);
+                let _brush = Selected::new(buf.dc, GetStockObject(NULL_BRUSH), false);
+                let _ = RoundRect(buf.dc, 0, 0, w - 1, h - 1, radius, radius);
+            }
+
+            // Slider track.
+            {
+                let _brush = Selected::new(buf.dc, HGDIOBJ(cache.track.0), false);
                 let _ = RoundRect(
                     buf.dc,
-                    l.bar_fill.left,
-                    l.bar_fill.top,
-                    l.bar_fill.right,
-                    l.bar_fill.bottom,
+                    l.bar_track.left,
+                    l.bar_track.top,
+                    l.bar_track.right,
+                    l.bar_track.bottom,
                     pill,
                     pill,
                 );
             }
-            let _ = Ellipse(
-                buf.dc,
-                l.thumb.left,
-                l.thumb.top,
-                l.thumb.right,
-                l.thumb.bottom,
-            );
-        }
 
-        // Text. The device line is skipped outright (not drawn blank) when
-        // no default device is known.
-        let _ = SetTextColor(buf.dc, rgb(tokens.text));
-        if !content.device.is_empty() {
-            with_wide(&content.device, |name| {
-                let mut rect = l.name;
-                // SAFETY: `buf.dc` is live with the card font selected and
-                // `name` is NUL-terminated; `rect` is the measured target box.
+            // Filled portion and thumb, both in the accent (neutral while
+            // muted).
+            {
+                let level = if content.muted {
+                    cache.muted_fill
+                } else {
+                    cache.fill
+                };
+                let _brush = Selected::new(buf.dc, HGDIOBJ(level.0), false);
+                if l.bar_fill.right > l.bar_fill.left {
+                    let _ = RoundRect(
+                        buf.dc,
+                        l.bar_fill.left,
+                        l.bar_fill.top,
+                        l.bar_fill.right,
+                        l.bar_fill.bottom,
+                        pill,
+                        pill,
+                    );
+                }
+                let _ = Ellipse(
+                    buf.dc,
+                    l.thumb.left,
+                    l.thumb.top,
+                    l.thumb.right,
+                    l.thumb.bottom,
+                );
+            }
+
+            // Text. The device line is skipped outright (not drawn blank) when
+            // no default device is known.
+            let _ = SetTextColor(buf.dc, rgb(tokens.text));
+            if !content.device.is_empty() {
+                with_wide(&content.device, |name| {
+                    let mut rect = l.name;
+                    // SAFETY: `buf.dc` is live with the card font selected and
+                    // `name` is sized for `DrawTextW`'s character count.
+                    let _ = DrawTextW(
+                        buf.dc,
+                        name,
+                        &mut rect,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS,
+                    );
+                });
+            }
+            let _ = SetTextColor(buf.dc, rgb(tokens.dim_text));
+            with_wide(&content.state, |state| {
+                let mut rect = l.state;
+                // SAFETY: as above, with the right-aligned state box.
                 let _ = DrawTextW(
                     buf.dc,
-                    name,
+                    state,
                     &mut rect,
-                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS,
+                    DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
                 );
             });
-        }
-        let _ = SetTextColor(buf.dc, rgb(tokens.dim_text));
-        with_wide(&content.state, |state| {
-            let mut rect = l.state;
-            // SAFETY: as above, with the right-aligned state box.
-            let _ = DrawTextW(
-                buf.dc,
-                state,
-                &mut rect,
-                DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
-            );
-        });
 
-        let _ = BitBlt(hdc, 0, 0, w, h, Some(buf.dc), 0, 0, SRCCOPY);
-    }
+            let _ = BitBlt(hdc, 0, 0, w, h, Some(buf.dc), 0, 0, SRCCOPY);
+        }
+    });
 }
