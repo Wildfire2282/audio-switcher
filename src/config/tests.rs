@@ -60,6 +60,26 @@ fn path_chain_prefers_appdata_then_localappdata_then_temp() {
     assert!(temp_path.is_absolute());
 }
 
+/// The only thing that turns an OS locale into a language, and the
+/// traditional-Chinese branch has no other coverage: it must fall back to
+/// English rather than to Simplified.
+#[test]
+fn locale_names_resolve_to_a_language() {
+    for (locale, expected) in [
+        ("zh-CN", Lang::Zh),
+        ("zh", Lang::Zh),
+        ("ZH-cn", Lang::Zh),
+        ("zh-TW", Lang::En),
+        ("zh-Hant-TW", Lang::En),
+        ("zh_HK", Lang::En),
+        ("en-US", Lang::En),
+        ("de-DE", Lang::En),
+        ("", Lang::En),
+    ] {
+        assert_eq!(Lang::for_locale_name(locale), expected, "{locale}");
+    }
+}
+
 #[test]
 fn explicit_modes_survive_effective() {
     let zh = AppConfig {
