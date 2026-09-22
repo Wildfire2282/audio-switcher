@@ -94,6 +94,117 @@ fn describe_carries_exit_code_and_tool_output() {
     assert!(detail.contains("boom"), "{detail}");
 }
 
+/// The raw bytes of `name` under `HKCU\<subkey>`, or `None` when the key or the
+/// value is absent.
+///
+/// Reads the registry directly (rather than through the module's own helpers)
+/// so the assertions can pin the stored format: a `REG_SZ` command with its
+/// terminator, and the twelve-byte Task Manager marker.
+#[cfg(windows)]
+fn read_registry_value(subkey: &str, name: &str) -> Option<Vec<u8>> {
+    use windows::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
+    };
+    use windows::core::PCWSTR;
+
+    let subkey = crate::platform::utf16::wide_z(subkey);
+    let name = crate::platform::utf16::wide_z(name);
+    let mut hkey = HKEY(std::ptr::null_mut());
+    // SAFETY: the subkey string outlives the call; `hkey` is written only on
+    // success and closed on every path below.
+    let opened = unsafe {
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey.as_ptr()),
+            None,
+            KEY_QUERY_VALUE,
+            &raw mut hkey,
+        )
+    };
+    if opened.is_err() {
+        return None;
+    }
+    let mut len = 0u32;
+    // SAFETY: a null data pointer with a size pointer asks for the size only.
+    let sized = unsafe {
+        RegQueryValueExW(
+            hkey,
+            PCWSTR(name.as_ptr()),
+            None,
+            None,
+            None,
+            Some(&raw mut len),
+        )
+    };
+    if sized.is_err() {
+        // SAFETY: closes the handle opened above.
+        unsafe {
+            let _ = RegCloseKey(hkey);
+        };
+        return None;
+    }
+    let mut data = vec![0u8; usize::try_from(len).unwrap_or(0)];
+    // SAFETY: `data` holds exactly `len` bytes, the size just read.
+    let read = unsafe {
+        RegQueryValueExW(
+            hkey,
+            PCWSTR(name.as_ptr()),
+            None,
+            None,
+            Some(data.as_mut_ptr()),
+            Some(&raw mut len),
+        )
+    };
+    // SAFETY: closes the handle opened above.
+    unsafe {
+        let _ = RegCloseKey(hkey);
+    };
+    read.is_ok().then_some(data)
+}
+
+#[test]
+#[ignore = "writes and removes the real HKCU Run value; run explicitly"]
+fn run_value_round_trip() {
+    // The `auto-launch` behaviour this crate now implements itself, against the
+    // real registry: write, read back as installed, then remove. The stored
+    // bytes are the contract an installed copy of another version still has to
+    // recognise, so they are asserted, not just the round trip.
+    let _ = set_run_value(false);
+
+    set_run_value(true).expect("enable");
+    assert!(
+        run_value_enabled().expect("read back after enable"),
+        "the Run value must read as installed and enabled"
+    );
+    let exe = get_exe_path().expect("exe path");
+    let expected: Vec<u8> = format!("\"{}\"", exe.display())
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .chain([0, 0])
+        .collect();
+    assert_eq!(
+        read_registry_value(RUN_KEY, autostart_key_name()),
+        Some(expected),
+        "the stored Run command must be this exe, in quotes"
+    );
+    assert_eq!(
+        read_registry_value(RUN_APPROVED_KEY, autostart_key_name()),
+        Some(STARTUP_APPROVED_ENABLED.to_vec()),
+        "the Task Manager marker must be rewritten as enabled"
+    );
+
+    set_run_value(false).expect("disable");
+    assert!(
+        !run_value_enabled().expect("read back after disable"),
+        "the Run value must be gone"
+    );
+    assert_eq!(
+        read_registry_value(RUN_KEY, autostart_key_name()),
+        None,
+        "the Run value must be removed, not blanked"
+    );
+}
+
 #[test]
 #[ignore = "creates and deletes a real scheduled task; run explicitly"]
 fn create_and_delete_task_round_trip() {

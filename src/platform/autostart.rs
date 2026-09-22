@@ -23,7 +23,6 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use auto_launch::{AutoLaunch, WindowsEnableMode};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -46,9 +45,9 @@ pub enum AutostartError {
     #[error("cannot determine executable path")]
     NoExePath,
     #[error("failed to enable autostart")]
-    Enable(#[source] auto_launch::Error),
+    Enable(#[source] std::io::Error),
     #[error("failed to disable autostart")]
-    Disable(#[source] auto_launch::Error),
+    Disable(#[source] std::io::Error),
     /// The elevated helper never started: the user declined the consent prompt
     /// or the launch itself failed (`ShellExecuteW` returned `<= 32`).
     #[error("elevation declined or unavailable (code {code})")]
@@ -120,31 +119,345 @@ const TASK_ABSENT: u8 = 0;
 const TASK_PRESENT: u8 = 1;
 static ADMIN_TASK: AtomicU8 = AtomicU8::new(TASK_ABSENT);
 
+/// `HKCU` subkey holding the current-user logon `Run` values.
+const RUN_KEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+
+/// `HKCU` subkey where the shell records whether a startup entry is enabled.
+///
+/// An entry switched off in Task Manager's Startup tab stays in `Run`; this
+/// marker is what says it must not start.
+const RUN_APPROVED_KEY: &str =
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+
+/// `StartupApproved` value meaning "enabled": `0x02` then eight zero bytes (the
+/// disabled form carries a timestamp there instead).
+#[cfg(windows)]
+const STARTUP_APPROVED_ENABLED: [u8; 12] = [0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
 #[must_use]
 pub fn get_exe_path() -> Option<PathBuf> {
     std::env::current_exe().ok()
 }
 
-fn autolaunch_for_current_exe() -> Option<AutoLaunch> {
-    let exe = get_exe_path()?;
-    // `Cow` avoids an allocation when the path is valid UTF-8 (the usual case).
-    let exe_str = exe.to_string_lossy();
-    Some(AutoLaunch::new(
-        autostart_key_name(),
-        &exe_str,
-        WindowsEnableMode::CurrentUser,
-        &[] as &[&str],
-    ))
+/// A `WIN32_ERROR` as an IO error: it already renders the OS message, and
+/// `AutostartError`'s wording stays the same.
+#[cfg(windows)]
+fn win32_err(status: windows::Win32::Foundation::WIN32_ERROR) -> std::io::Error {
+    std::io::Error::from_raw_os_error(status.0 as i32)
 }
 
-/// Cleans up [`LEGACY_AUTOSTART_KEYS`] on success (best effort, failures only
-/// logged).
-fn set_run_value(enable: bool) -> Result<(), AutostartError> {
-    let auto = autolaunch_for_current_exe().ok_or(AutostartError::NoExePath)?;
-    let result = if enable {
-        auto.enable().map_err(AutostartError::Enable)
+/// Whether the status is `ERROR_FILE_NOT_FOUND`, which for our calls means the
+/// key or value is simply absent.
+#[cfg(windows)]
+fn is_absent(status: windows::Win32::Foundation::WIN32_ERROR) -> bool {
+    status == windows::Win32::Foundation::ERROR_FILE_NOT_FOUND
+}
+
+/// A registry operation that had to succeed.
+#[cfg(windows)]
+fn require_ok(
+    status: windows::Win32::Foundation::WIN32_ERROR,
+    map: fn(std::io::Error) -> AutostartError,
+) -> Result<(), AutostartError> {
+    if status.is_ok() {
+        Ok(())
     } else {
-        auto.disable().map_err(AutostartError::Disable)
+        Err(map(win32_err(status)))
+    }
+}
+
+/// Write the current-user `Run` command and clear the Task Manager override.
+///
+/// The `Run` value is the quoted executable path: Windows splits an unquoted
+/// value at its first space, so `C:\Program Files\...` would never start. The
+/// read-back only asks whether a value with our name exists, so an entry
+/// written earlier without quotes still counts as installed.
+#[cfg(windows)]
+fn enable_run_value() -> Result<(), AutostartError> {
+    use windows::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, REG_SZ, RegCloseKey, RegCreateKeyW, RegSetValueExW,
+    };
+    use windows::core::PCWSTR;
+
+    let exe = get_exe_path().ok_or(AutostartError::NoExePath)?;
+    let command = super::utf16::wide_z(&format!("\"{}\"", exe.display()));
+    let value: Vec<u8> = command.iter().flat_map(|unit| unit.to_le_bytes()).collect();
+    let name = super::utf16::wide_z(autostart_key_name());
+    let subkey = super::utf16::wide_z(RUN_KEY);
+    let mut hkey = HKEY(std::ptr::null_mut());
+    // SAFETY: the subkey string outlives the call; `hkey` is written only on
+    // success and closed below. `RegCreateKeyW` creates the key when it is
+    // missing, which is the reason the extended form (and with it the
+    // `Win32_Security` feature) is not needed.
+    let created =
+        unsafe { RegCreateKeyW(HKEY_CURRENT_USER, PCWSTR(subkey.as_ptr()), &raw mut hkey) };
+    require_ok(created, AutostartError::Enable)?;
+    // SAFETY: `hkey` is open for writing; the value name and its data outlive
+    // the call.
+    let written =
+        unsafe { RegSetValueExW(hkey, PCWSTR(name.as_ptr()), None, REG_SZ, Some(&value)) };
+    // SAFETY: closes the handle opened above, exactly once.
+    unsafe {
+        let _ = RegCloseKey(hkey);
+    };
+    require_ok(written, AutostartError::Enable)?;
+
+    enable_startup_approved();
+    Ok(())
+}
+
+/// Clear the shell's "entry disabled" marker for our `Run` value.
+///
+/// Best effort: `StartupApproved` exists wherever there is a Startup tab, and a
+/// missing marker already means enabled. Without this, re-enabling autostart
+/// here would leave the entry switched off in the shell while the menu claimed
+/// otherwise.
+#[cfg(windows)]
+fn enable_startup_approved() {
+    use windows::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_BINARY, RegCloseKey, RegOpenKeyExW,
+        RegSetValueExW,
+    };
+    use windows::core::PCWSTR;
+
+    let subkey = super::utf16::wide_z(RUN_APPROVED_KEY);
+    let name = super::utf16::wide_z(autostart_key_name());
+    let mut hkey = HKEY(std::ptr::null_mut());
+    // SAFETY: the subkey string outlives the call; `hkey` is written only on
+    // success.
+    let opened = unsafe {
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey.as_ptr()),
+            None,
+            KEY_SET_VALUE,
+            &raw mut hkey,
+        )
+    };
+    if opened.is_err() {
+        tracing::debug!("startup-approved key unavailable ({opened:?}); entry stays enabled");
+        return;
+    }
+    // SAFETY: `hkey` is open for writing; the value name and its data outlive
+    // the call.
+    let written = unsafe {
+        RegSetValueExW(
+            hkey,
+            PCWSTR(name.as_ptr()),
+            None,
+            REG_BINARY,
+            Some(&STARTUP_APPROVED_ENABLED),
+        )
+    };
+    if written.is_err() {
+        tracing::warn!("startup-approved marker not written: {written:?}");
+    }
+    // SAFETY: closes the handle opened above, exactly once.
+    unsafe {
+        let _ = RegCloseKey(hkey);
+    };
+}
+
+/// Remove the current-user `Run` value; an absent key or value is success.
+#[cfg(windows)]
+fn disable_run_value() -> Result<(), AutostartError> {
+    use windows::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, RegCloseKey, RegDeleteValueW, RegOpenKeyExW,
+    };
+    use windows::core::PCWSTR;
+
+    let subkey = super::utf16::wide_z(RUN_KEY);
+    let name = super::utf16::wide_z(autostart_key_name());
+    let mut hkey = HKEY(std::ptr::null_mut());
+    // SAFETY: the subkey string outlives the call; `hkey` is written only on
+    // success.
+    let opened = unsafe {
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey.as_ptr()),
+            None,
+            KEY_SET_VALUE,
+            &raw mut hkey,
+        )
+    };
+    // Absent: no `Run` value of ours can exist without the key.
+    if is_absent(opened) {
+        return Ok(());
+    }
+    require_ok(opened, AutostartError::Disable)?;
+    // SAFETY: `hkey` is open; the value name outlives the call.
+    let removed = unsafe { RegDeleteValueW(hkey, PCWSTR(name.as_ptr())) };
+    // SAFETY: closes the handle opened above, exactly once.
+    unsafe {
+        let _ = RegCloseKey(hkey);
+    };
+    // Absent: the caller asked for it to be gone, and it is.
+    if is_absent(removed) {
+        return Ok(());
+    }
+    require_ok(removed, AutostartError::Disable)
+}
+
+/// Whether the current-user `Run` entry exists and is still enabled.
+///
+/// `Err` is a read failure: the menu grays the group out rather than guessing,
+/// so a key it cannot open must not read as "off".
+#[cfg(windows)]
+fn run_value_enabled() -> Result<bool, std::io::Error> {
+    use windows::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
+    };
+    use windows::core::PCWSTR;
+
+    let subkey = super::utf16::wide_z(RUN_KEY);
+    let name = super::utf16::wide_z(autostart_key_name());
+    let mut hkey = HKEY(std::ptr::null_mut());
+    // SAFETY: the subkey string outlives the call; `hkey` is written only on
+    // success.
+    let opened = unsafe {
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey.as_ptr()),
+            None,
+            KEY_QUERY_VALUE,
+            &raw mut hkey,
+        )
+    };
+    if is_absent(opened) {
+        return Ok(false);
+    }
+    if opened.is_err() {
+        return Err(win32_err(opened));
+    }
+    // SAFETY: `hkey` is open; the value name outlives the call; null data and
+    // size pointers ask only "is there a value with this name?".
+    let present = unsafe { RegQueryValueExW(hkey, PCWSTR(name.as_ptr()), None, None, None, None) };
+    // SAFETY: closes the handle opened above, exactly once.
+    unsafe {
+        let _ = RegCloseKey(hkey);
+    };
+    if is_absent(present) {
+        return Ok(false);
+    }
+    if present.is_err() {
+        return Err(win32_err(present));
+    }
+    startup_approved_enabled()
+}
+
+/// Whether Task Manager's Startup tab still has our entry switched on.
+///
+/// A missing key, a missing value, or a value too short to hold the timestamp
+/// all read as enabled: that is the shell's own default when there is nothing
+/// to remember.
+#[cfg(windows)]
+fn startup_approved_enabled() -> Result<bool, std::io::Error> {
+    use windows::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
+    };
+    use windows::core::PCWSTR;
+
+    let subkey = super::utf16::wide_z(RUN_APPROVED_KEY);
+    let name = super::utf16::wide_z(autostart_key_name());
+    let mut hkey = HKEY(std::ptr::null_mut());
+    // SAFETY: the subkey string outlives the call; `hkey` is written only on
+    // success.
+    let opened = unsafe {
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey.as_ptr()),
+            None,
+            KEY_QUERY_VALUE,
+            &raw mut hkey,
+        )
+    };
+    if is_absent(opened) {
+        return Ok(true);
+    }
+    if opened.is_err() {
+        return Err(win32_err(opened));
+    }
+    let mut len = 0u32;
+    // SAFETY: `hkey` is open; a null data pointer with a size pointer asks for
+    // the size only.
+    let sized = unsafe {
+        RegQueryValueExW(
+            hkey,
+            PCWSTR(name.as_ptr()),
+            None,
+            None,
+            None,
+            Some(&raw mut len),
+        )
+    };
+    if is_absent(sized) {
+        // SAFETY: closes the handle opened above, exactly once.
+        unsafe {
+            let _ = RegCloseKey(hkey);
+        };
+        return Ok(true);
+    }
+    if sized.is_err() {
+        // SAFETY: as above.
+        unsafe {
+            let _ = RegCloseKey(hkey);
+        };
+        return Err(win32_err(sized));
+    }
+    let mut data = vec![0u8; usize::try_from(len).unwrap_or(0)];
+    // SAFETY: `data` is exactly `len` bytes; the value name outlives the call.
+    let read = unsafe {
+        RegQueryValueExW(
+            hkey,
+            PCWSTR(name.as_ptr()),
+            None,
+            None,
+            Some(data.as_mut_ptr()),
+            Some(&raw mut len),
+        )
+    };
+    // SAFETY: closes the handle opened above, exactly once.
+    unsafe {
+        let _ = RegCloseKey(hkey);
+    };
+    if read.is_err() {
+        return Err(win32_err(read));
+    }
+    Ok(data
+        .last_chunk::<8>()
+        .is_none_or(|tail| tail.iter().all(|byte| *byte == 0)))
+}
+
+#[cfg(not(windows))]
+fn enable_run_value() -> Result<(), AutostartError> {
+    Err(AutostartError::Enable(std::io::Error::other(
+        "the logon Run value is Windows-only",
+    )))
+}
+
+#[cfg(not(windows))]
+fn disable_run_value() -> Result<(), AutostartError> {
+    Err(AutostartError::Disable(std::io::Error::other(
+        "the logon Run value is Windows-only",
+    )))
+}
+
+#[cfg(not(windows))]
+fn run_value_enabled() -> Result<bool, std::io::Error> {
+    Err(std::io::Error::other("the logon Run value is Windows-only"))
+}
+
+/// Apply the current-user `Run` value, then drop the pre-scheme names.
+///
+/// [`enable_run_value`]/[`disable_run_value`] replace what `auto-launch` did for
+/// this one call site: the `Run` command plus the `StartupApproved` marker. The
+/// dependency also carried OS detection and a macOS service crate for the two
+/// platforms this tool does not build for.
+fn set_run_value(enable: bool) -> Result<(), AutostartError> {
+    let result = if enable {
+        enable_run_value()
+    } else {
+        disable_run_value()
     };
     if result.is_ok() {
         cleanup_legacy_keys();
@@ -158,10 +471,7 @@ fn set_run_value(enable: bool) -> Result<(), AutostartError> {
 /// not write.
 #[must_use]
 pub fn autostart_state() -> AutostartState {
-    let Some(auto) = autolaunch_for_current_exe() else {
-        return AutostartState::Unknown("exe path unavailable".to_string());
-    };
-    match auto.is_enabled() {
+    match run_value_enabled() {
         Ok(true) => AutostartState::User,
         Ok(false) => {
             if admin_task_cached() {
@@ -418,7 +728,6 @@ fn cleanup_legacy_keys() {
         };
         use windows::core::PCWSTR;
 
-        const RUN_KEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
         let run_w = wide_z(RUN_KEY);
         let mut hkey = HKEY(std::ptr::null_mut());
         // SAFETY: RegOpenKeyExW with a subkey string living through the call;

@@ -17,7 +17,6 @@ path = "src/lib.rs"
 [dependencies]
 tray-icon = "0.24.2"
 muda = "0.19.3"
-auto-launch = "0.6.0"
 single-instance = "0.3.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
