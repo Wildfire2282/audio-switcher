@@ -18,7 +18,7 @@
 
 ## 验证
 
-- 宣称完成前跑 `pwsh scripts/smoke.ps1 -GateOnly`（build → test → fmt → clippy → manifest）与 `pwsh scripts/package.ps1`。
+- 宣称完成前跑 `pwsh scripts/smoke.ps1 -GateOnly`（步骤见脚本，勿在此复述）与 `pwsh scripts/package.ps1`。
 - `cargo test` 数量只增不减；变少要能说清原因。
 - `tests/architecture.rs` 是门禁：分层、托盘 tooltip、`windows` feature 集合、文件体积、内联测试体积、本文件体积、发布描述格式。违反时改代码，不改测试。
 - `#[ignore]` 测试会改本机真实录音设备或注入合成输入：单独显式执行，不要顺手跑。
