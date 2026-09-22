@@ -11,21 +11,26 @@ use tempfile::tempdir;
 fn default_values() {
     let c = AppConfig::default();
     assert_eq!(c.lang, Lang::System);
-    assert_eq!(c.lang.as_str(), "system");
+    assert_eq!(serde_json::to_string(&c.lang).unwrap(), "\"system\"");
     assert!(c.volume_limit_enabled);
     assert_eq!(c.volume_limit, 25);
     assert_eq!(c.autostart_mode, AutostartMode::User);
     assert_eq!(c.version, CURRENT_VERSION);
 }
 
+/// The stored spelling is the contract `config.json` and older files are read
+/// back through, so it is asserted through serde rather than a hand-written
+/// mapping that could drift from the `rename_all` attribute.
 #[test]
-fn lang_roundtrip() {
-    assert_eq!("system".parse::<Lang>().unwrap(), Lang::System);
-    assert_eq!("zh".parse::<Lang>().unwrap(), Lang::Zh);
-    assert_eq!("en".parse::<Lang>().unwrap(), Lang::En);
-    assert_eq!(Lang::System.to_string(), "system");
-    assert_eq!(Lang::Zh.to_string(), "zh");
-    assert_eq!(Lang::En.to_string(), "en");
+fn lang_round_trips_through_the_storage_format() {
+    for (lang, stored) in [
+        (Lang::System, "\"system\""),
+        (Lang::Zh, "\"zh\""),
+        (Lang::En, "\"en\""),
+    ] {
+        assert_eq!(serde_json::to_string(&lang).unwrap(), stored);
+        assert_eq!(serde_json::from_str::<Lang>(stored).unwrap(), lang);
+    }
 }
 
 #[test]

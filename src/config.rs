@@ -9,7 +9,6 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::sync::LazyLock;
 
 use crate::platform::autostart::AutostartMode;
@@ -43,16 +42,6 @@ pub enum Lang {
 }
 
 impl Lang {
-    /// String representation as stored in JSON / config.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::System => "system",
-            Self::Zh => "zh",
-            Self::En => "en",
-        }
-    }
-
     /// Whether this is Chinese.
     #[must_use]
     pub fn is_zh(self) -> bool {
@@ -88,25 +77,6 @@ impl Lang {
             return Self::En;
         }
         Self::for_locale_name(&name)
-    }
-}
-
-impl std::fmt::Display for Lang {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for Lang {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "system" | "auto" | "follow" => Ok(Self::System),
-            "zh" | "chinese" | "cn" => Ok(Self::Zh),
-            "en" | "english" => Ok(Self::En),
-            _ => Err("unknown language"),
-        }
     }
 }
 
