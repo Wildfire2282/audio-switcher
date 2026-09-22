@@ -216,6 +216,10 @@ mod win {
     pub(crate) struct OsdOverlay {
         hwnd: HWND,
         dpi: i32,
+        /// Marker to make `OsdOverlay` `!Send`: the window belongs to the thread
+        /// that created it (its messages are dispatched there) and the paint
+        /// caches are thread-locals.
+        _marker: std::marker::PhantomData<*const ()>,
     }
 
     impl OsdOverlay {
@@ -267,7 +271,11 @@ mod win {
                 let _ = unsafe { DestroyWindow(hwnd) };
                 return None;
             }
-            Some(Self { hwnd, dpi })
+            Some(Self {
+                hwnd,
+                dpi,
+                _marker: std::marker::PhantomData,
+            })
         }
 
         /// Move and size the window, reporting a failure once.
@@ -345,7 +353,10 @@ mod win {
 pub(crate) use win::OsdOverlay;
 
 #[cfg(not(windows))]
-pub(crate) struct OsdOverlay;
+pub(crate) struct OsdOverlay {
+    /// Same `!Send` marker as the real overlay, so the type keeps one shape.
+    _marker: std::marker::PhantomData<*const ()>,
+}
 
 #[cfg(not(windows))]
 impl OsdOverlay {
