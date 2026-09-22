@@ -1,5 +1,5 @@
 //! Step math for the volume and device actions: pure, `#[must_use]`, and
-//! unit-tested from `app::mod`.
+//! unit-tested from the sibling `tests.rs`.
 
 /// Index of the device `step` positions from `current`, wrapping at both ends.
 ///
@@ -23,3 +23,6 @@ pub(super) fn cycle_index(len: usize, current: Option<usize>, step: i32) -> Opti
 pub(super) fn stepped_volume(volume: u32, delta: i32) -> u32 {
     u32::try_from((i64::from(volume) + i64::from(delta)).clamp(0, 100)).unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests;

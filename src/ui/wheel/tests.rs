@@ -55,6 +55,19 @@ fn wheel_large_delta() {
     assert_eq!(s, 2);
 }
 
+/// EarTrumpet-style hover: `Leave` clears the burst history so a stale burst
+/// cannot jump the volume on the next hover.
+#[test]
+fn hover_leave_resets_wheel_acceleration() {
+    let mut wheel = WheelState::new();
+    let base = Instant::now();
+    assert_eq!(wheel.push(base, 120), 1);
+    assert_eq!(wheel.push(base + Duration::from_millis(50), 120), 5);
+    wheel.clear();
+    let later = base + Duration::from_millis(300);
+    assert_eq!(wheel.push(later, 120), 1);
+}
+
 #[test]
 fn total_step_sign_and_scaling() {
     // Single tick keeps sign with per-tick step.
