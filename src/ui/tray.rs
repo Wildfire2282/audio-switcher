@@ -12,6 +12,16 @@ use tray_icon::{TrayIcon, TrayIconBuilder};
 use crate::ui::icon::make_icon;
 use crate::ui::menu::{MenuHandles, MenuState, build_menu};
 
+/// How long a tray-icon rectangle may be reused.
+///
+/// `Shell_NotifyIconGetRect` crosses into Explorer, and the hover gate asks for
+/// the rect twice per wheel notch. The icon *can* move with the taskbar, so the
+/// cache expires rather than holding the last answer for the session.
+const ICON_RECT_TTL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// A tray-icon rectangle `(x, y, width, height)`, with the instant it was read.
+type CachedIconRect = ((i32, i32, i32, i32), std::time::Instant);
+
 /// Tray construction failure.
 #[derive(Debug, Error)]
 pub enum TrayError {
@@ -42,6 +52,11 @@ pub struct TrayWrapper {
     /// `set_icon` would spend a `Shell_NotifyIcon` on every one of them to
     /// redraw the exact same bitmap.
     pushed_mute: Option<bool>,
+    /// Last `Shell_NotifyIconGetRect` answer and when it was taken.
+    ///
+    /// `Cell` (not `RefCell`) because the payload is `Copy` and the tray icon is
+    /// a UI-thread singleton like the overlay's paint cache.
+    rect_cache: std::cell::Cell<Option<CachedIconRect>>,
 }
 
 impl TrayWrapper {
@@ -69,6 +84,7 @@ impl TrayWrapper {
             tray,
             handles,
             pushed_mute: Some(state.muted),
+            rect_cache: std::cell::Cell::new(None),
         })
     }
 
@@ -104,17 +120,27 @@ impl TrayWrapper {
 
     /// The tray icon's screen rectangle as `(x, y, width, height)`.
     ///
-    /// Anchors the volume overlay to the icon. `None` while the shell has not
-    /// reported a rectangle yet (the caller then falls back to the screen).
+    /// Anchors the volume overlay to the icon and answers the hover gate, so it
+    /// is asked once per wheel notch — the answer is cached for
+    /// [`ICON_RECT_TTL`] instead of taking the Explorer round-trip every time.
+    /// `None` while the shell has not reported a rectangle yet (the caller then
+    /// falls back to the screen).
     #[must_use]
     pub fn icon_rect(&self) -> Option<(i32, i32, i32, i32)> {
+        if let Some((rect, taken)) = self.rect_cache.get() {
+            if taken.elapsed() < ICON_RECT_TTL {
+                return Some(rect);
+            }
+        }
         let rect = self.tray.rect()?;
-        Some((
+        let rect = (
             rect.position.x as i32,
             rect.position.y as i32,
             i32::try_from(rect.size.width).unwrap_or(0),
             i32::try_from(rect.size.height).unwrap_or(0),
-        ))
+        );
+        self.rect_cache.set(Some((rect, std::time::Instant::now())));
+        Some(rect)
     }
 
     /// Rebuild the context menu from `state`.

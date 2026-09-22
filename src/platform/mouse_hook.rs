@@ -180,19 +180,12 @@ pub(crate) fn cursor_over_tray(wrapper: &crate::ui::tray::TrayWrapper) -> Option
             tracing::debug!("cursor_over_tray: GetCursorPos failed: {e:?}");
             return Some(false);
         }
-        let rect = wrapper.tray.rect()?;
-        let x = f64::from(pt.x);
-        let y = f64::from(pt.y);
+        let (rx, ry, rw, rh) = wrapper.icon_rect()?;
         // Keep tolerance minimal (DPI rounding only). A large pad plus the
         // old grace window caused volume changes when the cursor had already
         // left the icon / was over a neighboring tray icon.
-        let pad = 2.0;
-        Some(
-            x >= rect.position.x - pad
-                && x < rect.position.x + f64::from(rect.size.width) + pad
-                && y >= rect.position.y - pad
-                && y < rect.position.y + f64::from(rect.size.height) + pad,
-        )
+        const PAD: i32 = 2;
+        Some(pt.x >= rx - PAD && pt.x < rx + rw + PAD && pt.y >= ry - PAD && pt.y < ry + rh + PAD)
     }
 }
 

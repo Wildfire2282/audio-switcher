@@ -280,8 +280,8 @@ mod win {
 
         /// Position the overlay next to `anchor` and show `content`.
         ///
-        /// The position is recomputed every call: the icon moves with the
-        /// taskbar, so a cached rectangle would drift.
+        /// The placement is recomputed on every call: the icon moves with the
+        /// taskbar, so a card placed once would drift away from it.
         ///
         /// Two passes: the first puts the window on the anchor's monitor, which
         /// is what lets the second read that monitor's DPI. A single pass would
