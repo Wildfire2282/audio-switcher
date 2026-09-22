@@ -368,6 +368,18 @@ fn resolve_config_path() -> (PathBuf, bool) {
     )
 }
 
+/// A per-call token for a sibling file name: process id, then nanoseconds.
+///
+/// Shared by the temporary file and the corrupt-config backup so both use one
+/// format. Not a security boundary — the config folder is the user's own — but
+/// it keeps two writers from choosing the same name.
+fn unique_token() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    format!("{}-{nanos}", std::process::id())
+}
+
 /// Legacy v1 path (`%APPDATA%\AudioSwitcher\config.json`) for one-time import.
 fn legacy_config_path() -> Option<PathBuf> {
     let appdata = std::env::var("APPDATA").ok()?;
@@ -529,19 +541,10 @@ impl AppConfig {
 
     /// Back up offending `bytes` next to `path`, overwrite with defaults, and return them.
     fn backup_and_reset(bytes: &[u8], path: &Path) -> Self {
-        let backup = {
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos());
-            let pid = std::process::id();
-            path.with_file_name(format!(
-                "{}.bak.{}-{}",
-                path.file_name()
-                    .map_or_else(|| "config.json".into(), |n| n.to_string_lossy().to_string(),),
-                nanos,
-                pid
-            ))
-        };
+        let file_name = path
+            .file_name()
+            .map_or_else(|| "config.json".into(), |n| n.to_string_lossy().to_string());
+        let backup = path.with_file_name(format!("{file_name}.bak.{}", unique_token()));
         let def = Self::default();
         match std::fs::write(&backup, bytes) {
             Ok(()) => {
@@ -586,11 +589,7 @@ impl AppConfig {
                 .file_name()
                 .map_or_else(|| "config.json".into(), |n| n.to_string_lossy().to_string());
             let suffix = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos());
-            let pid = std::process::id();
-            path.with_file_name(format!("{file_name}.tmp.{pid}-{nanos}-{suffix}"))
+            path.with_file_name(format!("{file_name}.tmp.{}-{suffix}", unique_token()))
         };
         std::fs::write(&tmp_path, body.as_bytes())?;
         // On Windows rename uses MoveFileExW(REPLACE_EXISTING) and atomically replaces.
