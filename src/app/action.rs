@@ -236,9 +236,17 @@ impl<B: AudioBackend> App<B> {
             return;
         }
         self.cached_mute = target;
-        // The menu check mark tracks the backend; `refresh_ui` re-reads it and
-        // also repaints the tray icon, which genuinely changed here.
-        self.refresh_ui();
+        // The mute click keeps its side effect of applying the volume limit. The
+        // mirror is clamped with it, because the feedback and the next step both
+        // read the mirror rather than the endpoint.
+        if let Err(e) = self.backend.clamp_volume_if_needed(&self.cfg) {
+            tracing::warn!("volume clamp failed: {e}");
+        }
+        self.cached_volume = crate::config::clamp_volume(self.cached_volume, &self.cfg);
+        // Only the mute read-outs move: a full `refresh_ui` would re-read the
+        // whole snapshot and walk the menu for one check mark.
+        self.tray.sync_mute(target);
+        self.tray.update_icon_if_changed(target);
         self.show_osd();
     }
 
