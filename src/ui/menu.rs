@@ -261,30 +261,128 @@ fn sync_entries(
 /// panic on it: startup dialogs and exits through `TrayError`, and a runtime
 /// rebuild logs and keeps the menu that is already on screen.
 pub fn build_menu(state: &MenuState<'_>) -> Result<MenuHandles, muda::Error> {
+    let MenuState { cfg, ui_lang, .. } = *state;
+    let menu = Menu::new();
+    menu.append(&MenuItem::with_id(id::TITLE, title_text(), false, None))?;
+    menu.append(&PredefinedMenuItem::separator())?;
+
+    // Appended group by group, in the order the menu shows them; each builder
+    // returns the handles `MenuHandles` has to keep for in-place updates.
+    let devices = append_devices(&menu, state)?;
+    let features = append_features(&menu, state)?;
+    let tail = append_tail(&menu, state)?;
+
+    Ok(MenuHandles {
+        menu,
+        device_items: devices.outputs,
+        input_items: devices.inputs,
+        lang_mode: cfg.lang,
+        lang_ui: ui_lang,
+        mute: features.mute,
+        vol_enabled: features.vol_enabled,
+        vol_items: features.vol_items,
+        autostart: tail.autostart,
+        autostart_off: tail.autostart_off,
+        autostart_user: tail.autostart_user,
+        autostart_admin: tail.autostart_admin,
+        lang_system: tail.language.system,
+        lang_zh: tail.language.zh,
+        lang_en: tail.language.en,
+    })
+}
+
+/// Handles of the device group.
+struct DeviceGroup {
+    outputs: Vec<(String, String, CheckMenuItem)>,
+    inputs: Vec<(String, String, CheckMenuItem)>,
+}
+
+/// Handles of the feature group: mute, the volume limit, the system tools.
+struct FeatureGroup {
+    mute: CheckMenuItem,
+    vol_enabled: CheckMenuItem,
+    vol_items: Vec<(u32, CheckMenuItem)>,
+}
+
+/// Handles of the language submenu.
+struct LanguageGroup {
+    system: CheckMenuItem,
+    zh: CheckMenuItem,
+    en: CheckMenuItem,
+}
+
+/// Handles of the tail: refresh, autostart, language, about, exit.
+struct TailGroup {
+    autostart: Submenu,
+    autostart_off: CheckMenuItem,
+    autostart_user: CheckMenuItem,
+    autostart_admin: CheckMenuItem,
+    language: LanguageGroup,
+}
+
+/// Append the device group (outputs, then inputs).
+fn append_devices(menu: &Menu, state: &MenuState<'_>) -> Result<DeviceGroup, muda::Error> {
     let MenuState {
-        cfg,
         devices,
         default_id,
         inputs,
         default_input_id,
-        muted,
-        autostart,
         ui_lang,
+        ..
     } = *state;
-    let title = MenuItem::with_id(id::TITLE, title_text(), false, None);
+    let outputs = check_entries(devices, DEVICE_PREFIX, default_id);
+    let inputs = check_entries(inputs, INPUT_PREFIX, default_input_id);
 
-    let device_items = check_entries(devices, DEVICE_PREFIX, default_id);
-    let input_items = check_entries(inputs, INPUT_PREFIX, default_input_id);
-
-    let refresh = MenuItem::with_id(id::REFRESH, tr("refresh", ui_lang), true, None);
-    let mute = CheckMenuItem::with_id(id::MUTE, tr("mute", ui_lang), true, muted, None);
-
+    if outputs.is_empty() && inputs.is_empty() {
+        // Visible empty state: the device group must not vanish silently, or
+        // a failed enumeration looks like a menu that lost its devices.
+        menu.append(&MenuItem::with_id(
+            id::NO_DEVICES,
+            tr("no_devices", ui_lang),
+            false,
+            None,
+        ))?;
+        return Ok(DeviceGroup { outputs, inputs });
+    }
     // Disabled section headers; ids avoid the device prefixes so the handler
     // never parses them as device actions even if they were clickable.
-    let output_header =
-        MenuItem::with_id("outputs_header", tr("output_devices", ui_lang), false, None);
-    let input_header =
-        MenuItem::with_id("inputs_header", tr("input_devices", ui_lang), false, None);
+    if !outputs.is_empty() {
+        menu.append(&MenuItem::with_id(
+            "outputs_header",
+            tr("output_devices", ui_lang),
+            false,
+            None,
+        ))?;
+        for (_, _, item) in &outputs {
+            menu.append(item)?;
+        }
+        menu.append(&PredefinedMenuItem::separator())?;
+    }
+    if !inputs.is_empty() {
+        menu.append(&MenuItem::with_id(
+            "inputs_header",
+            tr("input_devices", ui_lang),
+            false,
+            None,
+        ))?;
+        for (_, _, item) in &inputs {
+            menu.append(item)?;
+        }
+        menu.append(&PredefinedMenuItem::separator())?;
+    }
+    Ok(DeviceGroup { outputs, inputs })
+}
+
+/// Append the feature group: the mute toggle, the volume limit, the system tools.
+fn append_features(menu: &Menu, state: &MenuState<'_>) -> Result<FeatureGroup, muda::Error> {
+    let MenuState {
+        cfg,
+        muted,
+        ui_lang,
+        ..
+    } = *state;
+    let mute = CheckMenuItem::with_id(id::MUTE, tr("mute", ui_lang), true, muted, None);
+    menu.append(&mute)?;
 
     let vol_enabled = CheckMenuItem::with_id(
         id::VOL_ENABLED,
@@ -293,32 +391,97 @@ pub fn build_menu(state: &MenuState<'_>) -> Result<MenuHandles, muda::Error> {
         cfg.volume_limit_enabled,
         None,
     );
-    let vol_items: Vec<CheckMenuItem> = VOLUME_PRESETS
+    // Built as `(preset, item)` pairs in one pass: the submenu borrows the items
+    // and `MenuHandles` keeps the pairs for its in-place checks.
+    let vol_items: Vec<(u32, CheckMenuItem)> = VOLUME_PRESETS
         .iter()
         .map(|preset| {
-            CheckMenuItem::with_id(
-                id::vol_preset(*preset),
-                format!("{preset}%"),
-                cfg.volume_limit_enabled,
-                cfg.volume_limit == *preset && cfg.volume_limit_enabled,
-                None,
+            (
+                *preset,
+                CheckMenuItem::with_id(
+                    id::vol_preset(*preset),
+                    format!("{preset}%"),
+                    cfg.volume_limit_enabled,
+                    cfg.volume_limit == *preset && cfg.volume_limit_enabled,
+                    None,
+                ),
             )
         })
         .collect();
     let vol_sep = PredefinedMenuItem::separator();
     let mut vol_refs: Vec<&dyn muda::IsMenuItem> = vec![&vol_enabled, &vol_sep];
-    vol_refs.extend(vol_items.iter().map(|item| item as &dyn muda::IsMenuItem));
+    vol_refs.extend(
+        vol_items
+            .iter()
+            .map(|(_, item)| item as &dyn muda::IsMenuItem),
+    );
     let vol_sub =
         Submenu::with_id_and_items("volume_limit", tr("volume_limit", ui_lang), true, &vol_refs)?;
+    menu.append(&vol_sub)?;
 
-    let open_mixer = MenuItem::with_id(id::OPEN_MIXER, tr("open_mixer", ui_lang), true, None);
-    let open_sound = MenuItem::with_id(id::OPEN_SOUND, tr("open_sound", ui_lang), true, None);
-    let open_hotkey_settings = MenuItem::with_id(
-        id::OPEN_HOTKEY_SETTINGS,
-        tr("open_hotkey_settings", ui_lang),
+    menu.append(&PredefinedMenuItem::separator())?;
+    for (item_id, key) in [
+        (id::OPEN_MIXER, "open_mixer"),
+        (id::OPEN_SOUND, "open_sound"),
+        (id::OPEN_HOTKEY_SETTINGS, "open_hotkey_settings"),
+    ] {
+        menu.append(&MenuItem::with_id(item_id, tr(key, ui_lang), true, None))?;
+    }
+    menu.append(&PredefinedMenuItem::separator())?;
+
+    Ok(FeatureGroup {
+        mute,
+        vol_enabled,
+        vol_items,
+    })
+}
+
+/// Append the language submenu; the checks follow the configured mode.
+fn append_language(menu: &Menu, state: &MenuState<'_>) -> Result<LanguageGroup, muda::Error> {
+    let MenuState { cfg, ui_lang, .. } = *state;
+    let system = CheckMenuItem::with_id(
+        id::LANG_SYSTEM,
+        tr("system", ui_lang),
         true,
+        cfg.lang == Lang::System,
         None,
     );
+    let zh = CheckMenuItem::with_id(
+        id::LANG_ZH,
+        tr("chinese", ui_lang),
+        true,
+        cfg.lang == Lang::Zh,
+        None,
+    );
+    let en = CheckMenuItem::with_id(
+        id::LANG_EN,
+        tr("english", ui_lang),
+        true,
+        cfg.lang == Lang::En,
+        None,
+    );
+    menu.append(&Submenu::with_id_and_items(
+        id::LANGUAGE,
+        tr("language", ui_lang),
+        true,
+        &[&system, &zh, &en],
+    )?)?;
+    Ok(LanguageGroup { system, zh, en })
+}
+
+/// Append the tail: refresh, the autostart group, the language submenu, about
+/// and exit — exit always last.
+fn append_tail(menu: &Menu, state: &MenuState<'_>) -> Result<TailGroup, muda::Error> {
+    let MenuState {
+        autostart, ui_lang, ..
+    } = *state;
+    menu.append(&MenuItem::with_id(
+        id::REFRESH,
+        tr("refresh", ui_lang),
+        true,
+        None,
+    ))?;
+
     let autostart_enabled = autostart.is_some();
     let autostart_title = if autostart_enabled {
         tr("autostart", ui_lang)
@@ -352,97 +515,30 @@ pub fn build_menu(state: &MenuState<'_>) -> Result<MenuHandles, muda::Error> {
         true,
         &[&autostart_off, &autostart_user, &autostart_admin],
     )?;
-    let lang_system = CheckMenuItem::with_id(
-        id::LANG_SYSTEM,
-        tr("system", ui_lang),
-        true,
-        cfg.lang == Lang::System,
-        None,
-    );
-    let lang_zh = CheckMenuItem::with_id(
-        id::LANG_ZH,
-        tr("chinese", ui_lang),
-        true,
-        cfg.lang == Lang::Zh,
-        None,
-    );
-    let lang_en = CheckMenuItem::with_id(
-        id::LANG_EN,
-        tr("english", ui_lang),
-        true,
-        cfg.lang == Lang::En,
-        None,
-    );
-    let lang_sub = Submenu::with_id_and_items(
-        id::LANGUAGE,
-        tr("language", ui_lang),
-        true,
-        &[&lang_system, &lang_zh, &lang_en],
-    )?;
-    let about = MenuItem::with_id(id::ABOUT, tr("about", ui_lang), true, None);
-    let exit = MenuItem::with_id(id::EXIT, tr("exit", ui_lang), true, None);
-
-    let menu = Menu::new();
-    menu.append(&title)?;
-    menu.append(&PredefinedMenuItem::separator())?;
-    if device_items.is_empty() && input_items.is_empty() {
-        // Visible empty state: the device group must not vanish silently, or
-        // a failed enumeration looks like a menu that lost its devices.
-        menu.append(&MenuItem::with_id(
-            id::NO_DEVICES,
-            tr("no_devices", ui_lang),
-            false,
-            None,
-        ))?;
-    }
-    if !device_items.is_empty() {
-        menu.append(&output_header)?;
-        for (_, _, item) in &device_items {
-            menu.append(item)?;
-        }
-        menu.append(&PredefinedMenuItem::separator())?;
-    }
-    if !input_items.is_empty() {
-        menu.append(&input_header)?;
-        for (_, _, item) in &input_items {
-            menu.append(item)?;
-        }
-        menu.append(&PredefinedMenuItem::separator())?;
-    }
-    menu.append(&mute)?;
-    menu.append(&vol_sub)?;
-    menu.append(&PredefinedMenuItem::separator())?;
-    menu.append(&open_mixer)?;
-    menu.append(&open_sound)?;
-    menu.append(&open_hotkey_settings)?;
-    menu.append(&PredefinedMenuItem::separator())?;
-    menu.append(&refresh)?;
     menu.append(&autostart_sub)?;
-    menu.append(&lang_sub)?;
-    menu.append(&PredefinedMenuItem::separator())?;
-    menu.append(&about)?;
-    menu.append(&exit)?;
 
-    Ok(MenuHandles {
-        menu,
-        device_items,
-        input_items,
-        lang_mode: cfg.lang,
-        lang_ui: ui_lang,
-        mute,
-        vol_enabled,
-        vol_items: VOLUME_PRESETS
-            .iter()
-            .zip(vol_items)
-            .map(|(p, i)| (*p, i))
-            .collect(),
+    let language = append_language(menu, state)?;
+
+    menu.append(&PredefinedMenuItem::separator())?;
+    menu.append(&MenuItem::with_id(
+        id::ABOUT,
+        tr("about", ui_lang),
+        true,
+        None,
+    ))?;
+    menu.append(&MenuItem::with_id(
+        id::EXIT,
+        tr("exit", ui_lang),
+        true,
+        None,
+    ))?;
+
+    Ok(TailGroup {
         autostart: autostart_sub,
         autostart_off,
         autostart_user,
         autostart_admin,
-        lang_system,
-        lang_zh,
-        lang_en,
+        language,
     })
 }
 
