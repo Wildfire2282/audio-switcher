@@ -5,7 +5,7 @@
 //! scrolling through GDI code. `fit` and `layout` are pure; only the screen
 //! queries above them touch Win32.
 
-use windows::Win32::Foundation::RECT;
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
     GetDC, GetDeviceCaps, GetMonitorInfoW, LOGPIXELSX, MONITOR_DEFAULTTONEAREST, MONITORINFO,
     MonitorFromRect, ReleaseDC,
@@ -30,6 +30,26 @@ pub(super) fn screen_dpi() -> i32 {
     let dpi = unsafe { GetDeviceCaps(Some(dc), LOGPIXELSX) };
     // SAFETY: balances the `GetDC` above (same null hwnd).
     unsafe { ReleaseDC(None, dc) };
+    if dpi > 0 { dpi } else { 96 }
+}
+
+/// DPI of the monitor `hwnd` currently sits on, read from the window's own
+/// device context.
+///
+/// [`screen_dpi`] answers for the primary screen only — the wrong monitor as
+/// soon as the tray icon sits on a differently-scaled display, which is why the
+/// card is re-scaled from this on every show.
+pub(super) fn window_dpi(hwnd: HWND) -> i32 {
+    // SAFETY: `GetDC` on a live window returns its DC or null; the matching
+    // `ReleaseDC` runs below exactly once.
+    let dc = unsafe { GetDC(Some(hwnd)) };
+    if dc.0.is_null() {
+        return 96;
+    }
+    // SAFETY: `dc` is a live window DC from `GetDC` above.
+    let dpi = unsafe { GetDeviceCaps(Some(dc), LOGPIXELSX) };
+    // SAFETY: balances the `GetDC` above (same window).
+    unsafe { ReleaseDC(Some(hwnd), dc) };
     if dpi > 0 { dpi } else { 96 }
 }
 

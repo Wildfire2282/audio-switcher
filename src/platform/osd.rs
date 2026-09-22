@@ -267,27 +267,46 @@ mod win {
             Some(Self { hwnd, dpi })
         }
 
+        /// Move and size the window, reporting a failure once.
+        fn move_to(&self, x: i32, y: i32, w: i32, h: i32) {
+            // SAFETY: `hwnd` is live; SWP_NOACTIVATE keeps the gesture gate
+            // intact and SWP_NOZORDER leaves the existing topmost z-order.
+            let moved =
+                unsafe { SetWindowPos(self.hwnd, None, x, y, w, h, SWP_NOACTIVATE | SWP_NOZORDER) };
+            if let Err(e) = moved {
+                tracing::warn!("osd: SetWindowPos failed: {e:?}");
+            }
+        }
+
         /// Position the overlay next to `anchor` and show `content`.
         ///
         /// The position is recomputed every call: the icon moves with the
         /// taskbar, so a cached rectangle would drift.
+        ///
+        /// Two passes: the first puts the window on the anchor's monitor, which
+        /// is what lets the second read that monitor's DPI. A single pass would
+        /// scale the card for whichever screen `new()` happened to start on.
         pub(crate) fn show(&mut self, content: OsdContent, anchor: Option<Anchor>) {
-            let (w, h) = (scale(CARD_W, self.dpi), scale(CARD_H, self.dpi));
+            let (mut w, mut h) = (scale(CARD_W, self.dpi), scale(CARD_H, self.dpi));
+            let (mut x, mut y) = layout::place(w, h, anchor, scale(GAP, self.dpi));
+            self.move_to(x, y, w, h);
+
+            let dpi = layout::window_dpi(self.hwnd);
+            if dpi != self.dpi {
+                self.dpi = dpi;
+                (w, h) = (scale(CARD_W, dpi), scale(CARD_H, dpi));
+                (x, y) = layout::place(w, h, anchor, scale(GAP, dpi));
+            }
+
             PAINT.with(|p| {
                 *p.borrow_mut() = Some(PaintJob {
                     content,
                     dpi: self.dpi,
                 });
             });
-            let (x, y) = layout::place(w, h, anchor, scale(GAP, self.dpi));
-            // SAFETY: `hwnd` is live; SWP_NOACTIVATE keeps the gesture gate
-            // intact and SWP_NOZORDER leaves the existing topmost z-order.
+            self.move_to(x, y, w, h);
+            // SAFETY: `hwnd` is live for the whole block.
             unsafe {
-                if let Err(e) =
-                    SetWindowPos(self.hwnd, None, x, y, w, h, SWP_NOACTIVATE | SWP_NOZORDER)
-                {
-                    tracing::warn!("osd: SetWindowPos failed: {e:?}");
-                }
                 let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
                 let _ = InvalidateRect(Some(self.hwnd), None, false);
                 // Synchronous paint: the feedback must not wait for the pump.

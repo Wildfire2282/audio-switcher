@@ -4,7 +4,7 @@
 //! one module in isolation, which is why they sit beside `win`.
 
 use super::draw::STYLE;
-use super::layout::{fit, layout, place};
+use super::layout::{fit, layout, place, window_dpi};
 use super::*;
 use crate::audio::AudioDevice;
 use crate::config::Lang;
@@ -193,6 +193,65 @@ fn overlay_creates_and_shows_visible_on_screen() {
         (rect.right - rect.left, rect.bottom - rect.top),
         (w, h),
         "wrong window size"
+    );
+}
+
+/// The card is sized and painted for the monitor it lands on.
+///
+/// `new()` can only read the primary screen's DPI, which is the wrong monitor
+/// as soon as the tray icon sits on a differently-scaled display. The window is
+/// therefore moved first and the scale re-read from the window — and the paint
+/// has to use that same scale, or the `BitBlt` copies a card that does not fill
+/// the window it was sized for.
+#[test]
+fn the_card_is_sized_and_painted_for_the_monitor_it_lands_on() {
+    let tokens = palette(true, Some((0x00, 0x78, 0xD4)));
+    STYLE.with(|slot| slot.set(Some(tokens)));
+    let Some(mut osd) = OsdOverlay::new() else {
+        panic!("OsdOverlay::new() returned None: window creation failed");
+    };
+    let monitor_dpi = window_dpi(osd.hwnd);
+    // Stand in for "the tray icon is on the other monitor": whatever `new()`
+    // cached must not survive a show.
+    osd.dpi = if monitor_dpi == 96 { 144 } else { 96 };
+    // SAFETY: both metrics take no arguments.
+    let (sw, sh) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
+    osd.show(named(62), Some((sw / 2, sh / 2, 24, 24)));
+
+    let (w, h) = (scale(CARD_W, monitor_dpi), scale(CARD_H, monitor_dpi));
+    let mut rect = RECT::default();
+    // SAFETY: plain out-parameter write on the live window.
+    let rect_ok = unsafe { GetWindowRect(osd.hwnd, &mut rect) }.is_ok();
+    // SAFETY: `GetDC`/`ReleaseDC` balance on the live window and the sample
+    // lies inside the client area computed above.
+    let inside = unsafe {
+        let dc = GetDC(Some(osd.hwnd));
+        // Right of the state column, vertically mid-card: inside the fill in
+        // either theme, and outside the card entirely if the window was sized
+        // for the monitor while the paint used another scale.
+        let px = GetPixel(dc, w - scale(PAD, monitor_dpi) - 1, h / 2).0 & 0x00FF_FFFF;
+        ReleaseDC(Some(osd.hwnd), dc);
+        px
+    };
+    let shown_dpi = osd.dpi;
+    // Hide before asserting so a failure cannot leave a card on screen.
+    osd.hide();
+    STYLE.with(|slot| slot.set(None));
+
+    assert_eq!(
+        shown_dpi, monitor_dpi,
+        "show() kept the DPI cached at construction"
+    );
+    assert!(rect_ok, "GetWindowRect failed");
+    assert_eq!(
+        (rect.right - rect.left, rect.bottom - rect.top),
+        (w, h),
+        "window not sized for the monitor it is on"
+    );
+    assert_eq!(
+        inside,
+        rgb(tokens.card).0 & 0x00FF_FFFF,
+        "the card was not painted at the window's scale"
     );
 }
 
