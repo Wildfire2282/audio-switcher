@@ -75,6 +75,8 @@ The overlay is the single read-out for volume and mute: the tray icon carries no
 
 Both live outside the program's folder, so the exe can be moved or deleted on its own.
 
+Log files older than 14 days are removed when the tool starts.
+
 ---
 
 ## 中文
@@ -143,3 +145,5 @@ Both live outside the program's folder, so the exe can be moved or deleted on it
 | 日志 | `%LOCALAPPDATA%\audio-switcher\logs\` |
 
 两者都在程序目录之外，exe 可单独移动或删除。
+
+启动时清理超过 14 天的旧日志。

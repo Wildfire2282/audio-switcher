@@ -45,6 +45,43 @@ fn failure_note(failure: Option<&str>) -> String {
     }
 }
 
+/// How long a daily log file is kept.
+///
+/// The name is day-indexed, so an install that lives for months would
+/// otherwise accumulate a file per day, none of them read again.
+const LOG_RETENTION: std::time::Duration = std::time::Duration::from_secs(14 * 24 * 60 * 60);
+
+/// Delete this tool's own log files older than [`LOG_RETENTION`].
+///
+/// Best effort: a file that will not delete (still open, permission) is
+/// skipped, and a name that is not one of ours is left alone — the directory
+/// is ours by name but `LOCALAPPDATA` can point somewhere shared.
+fn prune_old_logs(dir: &std::path::Path, now: std::time::SystemTime) {
+    let prefix = format!("{}-", crate::TOOL_ID);
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.starts_with(&prefix) || !name.ends_with(".log") {
+            continue;
+        }
+        let Ok(modified) = entry.metadata().and_then(|meta| meta.modified()) else {
+            continue;
+        };
+        // A future stamp (wall-clock jump) is not "old", so it is kept.
+        if now
+            .duration_since(modified)
+            .is_ok_and(|age| age > LOG_RETENTION)
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Install the `%LOCALAPPDATA%\<tool>\logs\` file sink and the
 /// show-dialog-and-exit panic hook. Idempotent best effort: when the log
 /// file cannot be opened, diagnostics still reach the dialog on panic.
@@ -81,6 +118,8 @@ pub fn init() {
     }));
 
     tracing::debug!("logging to {}", log_file_path().display());
+
+    prune_old_logs(&log_dir(), std::time::SystemTime::now());
 }
 
 /// Daily log file: day-indexed name gives rotation without a date library
