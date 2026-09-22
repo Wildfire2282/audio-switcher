@@ -181,47 +181,43 @@ pub(crate) fn open_url(url: &Url) {
     }
 }
 
+/// Launch a system tool through the shell and centre the dialog it opens.
+///
+/// Both tools open at a remembered or default position (the volume mixer lands
+/// at `0,0`), which is a corner on a large display; centring them matches the
+/// app's own dialogs. Failures surface `err_msg`.
+#[cfg(windows)]
+fn open_system_tool(target: &str, params: Option<&str>, err_msg: &str, what: &str) {
+    let (Ok(target_w), Ok(params_w)) = (wide_nul(target), params.map(wide_nul).transpose()) else {
+        tracing::warn!("{what} validation failed");
+        crate::platform::dialog::show_msgbox(err_msg);
+        return;
+    };
+    // Taken before the launch, so the dialog the launch produces is the one that
+    // was not there yet.
+    let before = crate::platform::dialog::dialogs_on_screen();
+    if let Err(e) = shell_execute(&target_w, params_w.as_deref()) {
+        tracing::warn!("{what} failed: {e}");
+        crate::platform::dialog::show_msgbox(err_msg);
+        return;
+    }
+    crate::platform::dialog::center_new_dialog(before);
+}
+
 /// Open the system volume mixer. `err_msg` is shown when launching fails.
 pub(crate) fn open_volume_mixer(err_msg: &str) {
     #[cfg(windows)]
-    {
-        match wide_nul("SndVol.exe") {
-            Ok(target) => {
-                if let Err(e) = shell_execute(&target, None) {
-                    tracing::warn!("open_volume_mixer failed: {e}");
-                    crate::platform::dialog::show_msgbox(err_msg);
-                }
-            }
-            Err(e) => {
-                tracing::warn!("open_volume_mixer validation failed: {e}");
-                crate::platform::dialog::show_msgbox(err_msg);
-            }
-        }
-    }
+    open_system_tool("SndVol.exe", None, err_msg, "open_volume_mixer");
     #[cfg(not(windows))]
-    {
-        let _ = err_msg;
-    }
+    let _ = err_msg;
 }
 
 /// Open the system sound settings. `err_msg` is shown when launching fails.
 pub(crate) fn open_sound_settings(err_msg: &str) {
     #[cfg(windows)]
-    {
-        if let (Ok(target), Ok(params)) = (wide_nul("control"), wide_nul("mmsys.cpl")) {
-            if let Err(e) = shell_execute(&target, Some(&params)) {
-                tracing::warn!("open_sound_settings failed: {e}");
-                crate::platform::dialog::show_msgbox(err_msg);
-            }
-        } else {
-            tracing::warn!("open_sound_settings validation failed");
-            crate::platform::dialog::show_msgbox(err_msg);
-        }
-    }
+    open_system_tool("control", Some("mmsys.cpl"), err_msg, "open_sound_settings");
     #[cfg(not(windows))]
-    {
-        let _ = err_msg;
-    }
+    let _ = err_msg;
 }
 
 /// Open a folder in Explorer. `err_msg` is shown when launching fails.
@@ -257,27 +253,4 @@ pub(crate) fn open_folder(dir: &std::path::Path, err_msg: &str) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn url_scheme_gate() {
-        // https + allowlisted host passes.
-        assert!(
-            "https://github.com/Wildfire2282/audio-switcher"
-                .parse::<Url>()
-                .is_ok()
-        );
-        // Illegal schemes never reach ShellExecuteW.
-        assert_eq!("http://github.com/x".parse::<Url>(), Err(UrlError::Scheme));
-        assert_eq!("file:///C:/x".parse::<Url>(), Err(UrlError::Scheme));
-        assert_eq!("javascript:alert(1)".parse::<Url>(), Err(UrlError::Scheme));
-        assert_eq!("".parse::<Url>(), Err(UrlError::Empty));
-        // Non-allowlisted hosts are rejected even over https.
-        assert_eq!("https://example.com/x".parse::<Url>(), Err(UrlError::Host));
-        assert_eq!(
-            "https://github.com.evil.com/x".parse::<Url>(),
-            Err(UrlError::Host)
-        );
-    }
-}
+mod tests;

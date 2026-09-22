@@ -59,7 +59,7 @@ A combination another program owns is reported in a dialog and left unbound; the
 
 ### System and settings
 
-- **Volume mixer** and **Sound settings** open the system tools.
+- **Volume mixer** and **Sound settings** open the system tools, centered on the screen.
 - **Auto Launch** picks how the tool starts at logon: **Off**, **Standard** (a `Run` entry, no prompt), or **Administrator** (a logon task that starts the tool elevated, so the hover wheel keeps working over windows owned by elevated apps such as Tencent Androws). Switching to or from **Administrator** asks once for elevation; the group is grayed while the state cannot be read.
 - The language submenu offers **Follow System**, **中文**, **English**.
 - **About** opens the release homepage; **Exit** quits and releases the hotkeys.
@@ -130,7 +130,7 @@ Log files older than 14 days are removed when the tool starts.
 
 ### 系统与设置
 
-- **音量合成器**与**声音设置**打开系统工具。
+- **音量合成器**与**声音设置**打开系统工具，窗口居中显示。
 - **开机自启**选择登录时的启动方式：**关闭**、**普通权限**（注册表 `Run`，不弹 UAC）、**管理员权限**（登录任务，以管理员启动，因此在管理员权限的应用窗口——例如腾讯应用宝 / Androws——上面悬停滚轮仍然有效）。在**管理员权限**与其它方式之间切换会弹一次 UAC；读取不到状态时整组置灰。
 - 语言子菜单提供**跟随系统**、**中文**、**English**。
 - **关于**打开 release 主页；**退出**退出并释放快捷键。
