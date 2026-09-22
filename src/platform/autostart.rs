@@ -301,11 +301,15 @@ fn admin_task_live() -> bool {
 /// Refresh the scheduled-task cache. Called once at startup from a worker
 /// thread; `schtasks` is too slow for the menu's refresh path.
 pub fn refresh_admin_task_cache() {
-    if let Ok(present) = task_exists() {
-        ADMIN_TASK.store(
+    match task_exists() {
+        Ok(present) => ADMIN_TASK.store(
             if present { TASK_PRESENT } else { TASK_ABSENT },
             Ordering::Release,
-        );
+        ),
+        // The stale cache only mis-reports the tray menu's autostart group, so
+        // this is a warning rather than a failure — but a silent one left the
+        // group permanently grayed with nothing to read.
+        Err(e) => tracing::warn!("scheduled task query failed ({e}); cache unchanged"),
     }
 }
 
@@ -438,6 +442,9 @@ fn cleanup_legacy_keys() {
             let status = unsafe { RegDeleteValueW(hkey, PCWSTR(name_w.as_ptr())) };
             if status.is_ok() {
                 tracing::debug!("legacy autostart cleanup: removed {name}");
+            } else {
+                // Usually "no such value", which is the normal case.
+                tracing::debug!("legacy autostart cleanup: {name} not removed ({status:?})");
             }
         }
         // SAFETY: balances the successful RegOpenKeyExW above, exactly once.

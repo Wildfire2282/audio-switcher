@@ -283,11 +283,17 @@ mod win {
             // SAFETY: `hwnd` is live; SWP_NOACTIVATE keeps the gesture gate
             // intact and SWP_NOZORDER leaves the existing topmost z-order.
             unsafe {
-                let _ = SetWindowPos(self.hwnd, None, x, y, w, h, SWP_NOACTIVATE | SWP_NOZORDER);
+                if let Err(e) =
+                    SetWindowPos(self.hwnd, None, x, y, w, h, SWP_NOACTIVATE | SWP_NOZORDER)
+                {
+                    tracing::warn!("osd: SetWindowPos failed: {e:?}");
+                }
                 let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
                 let _ = InvalidateRect(Some(self.hwnd), None, false);
                 // Synchronous paint: the feedback must not wait for the pump.
-                let _ = UpdateWindow(self.hwnd);
+                if !UpdateWindow(self.hwnd).as_bool() {
+                    tracing::warn!("osd: UpdateWindow failed; the card may not be drawn");
+                }
             }
         }
 

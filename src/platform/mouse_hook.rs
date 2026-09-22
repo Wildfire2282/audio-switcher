@@ -174,7 +174,10 @@ pub(crate) fn cursor_over_tray(wrapper: &crate::ui::tray::TrayWrapper) -> Option
         use windows::Win32::Foundation::POINT;
         use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
         let mut pt = POINT { x: 0, y: 0 };
-        if GetCursorPos(&mut pt).is_err() {
+        if let Err(e) = GetCursorPos(&mut pt) {
+            // Fail closed: without a position the gate cannot say "over the
+            // icon", and a wrong "yes" would let any scroll change the volume.
+            tracing::debug!("cursor_over_tray: GetCursorPos failed: {e:?}");
             return Some(false);
         }
         let rect = wrapper.tray.rect()?;

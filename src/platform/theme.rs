@@ -79,7 +79,9 @@ fn read_dword(subkey: &str, value: &str) -> Option<u32> {
         )
     };
     if opened.is_err() {
-        tracing::debug!("appearance: cannot open HKCU\\{subkey}");
+        // A missing key is "not configured" and normal; a present-but-unopenable
+        // one is not, and only the code tells them apart.
+        tracing::warn!("appearance: cannot open HKCU\\{subkey}: {opened:?}");
         return None;
     }
     let mut data = 0u32;
@@ -101,7 +103,16 @@ fn read_dword(subkey: &str, value: &str) -> Option<u32> {
     unsafe {
         let _ = RegCloseKey(hkey);
     }
-    (read.is_ok() && kind == REG_DWORD).then_some(data)
+    if read.is_err() {
+        tracing::warn!("appearance: cannot read {subkey}\\{value}: {read:?}");
+        return None;
+    }
+    if kind != REG_DWORD {
+        // Another type is a configuration ("not set"), not a fault.
+        tracing::debug!("appearance: {subkey}\\{value} is not a DWORD");
+        return None;
+    }
+    Some(data)
 }
 
 #[cfg(test)]

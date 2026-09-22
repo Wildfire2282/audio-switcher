@@ -485,11 +485,17 @@ impl AppConfig {
             Ok(bytes) => Self::load_from_bytes(&bytes, path),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let def = Self::default();
-                let _ = def.save_to(path);
+                // Not fatal: the in-memory defaults run this session either way.
+                if let Err(e) = def.save_to(path) {
+                    tracing::warn!("first config write failed: {e}");
+                }
                 def
             }
-            Err(_) => {
+            Err(e) => {
                 // Transient IO error (e.g. permission) — don't clobber file, return in-memory default.
+                // Named, because otherwise the user's edits appear to be applied
+                // and are silently discarded at exit.
+                tracing::warn!("config read failed ({e}); using in-memory defaults");
                 Self::default()
             }
         }

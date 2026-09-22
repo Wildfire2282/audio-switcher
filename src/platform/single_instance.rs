@@ -5,14 +5,17 @@
 //! caller dialogs and exits with 1).
 
 use single_instance::SingleInstance;
+use single_instance::error::SingleInstanceError;
 use thiserror::Error;
 
 /// Failure to create the single-instance primitive (ACL/namespace error).
 #[derive(Debug, Error)]
 pub enum InstanceError {
-    /// The OS primitive itself could not be created.
-    #[error("single-instance guard creation failed: {0}")]
-    CreateFailed(String),
+    /// The OS primitive itself could not be created. The source keeps the
+    /// Win32/NUL reason: `CreateMutexW`'s error code was the only clue and
+    /// `String` flattened it away.
+    #[error("single-instance guard creation failed")]
+    CreateFailed(#[source] SingleInstanceError),
 }
 
 /// RAII guard ensuring only one instance runs with the given `name`.
@@ -30,8 +33,7 @@ impl SingleInstanceGuard {
     ///
     /// Returns [`InstanceError::CreateFailed`] when the OS primitive fails.
     pub fn acquire(name: &str) -> Result<Option<Self>, InstanceError> {
-        let instance =
-            SingleInstance::new(name).map_err(|e| InstanceError::CreateFailed(e.to_string()))?;
+        let instance = SingleInstance::new(name).map_err(InstanceError::CreateFailed)?;
         if !instance.is_single() {
             return Ok(None);
         }

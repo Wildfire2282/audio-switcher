@@ -50,14 +50,21 @@ pub(crate) fn pump_messages() {
 pub(crate) fn wait_for_input(timeout_ms: u32) {
     #[cfg(windows)]
     {
+        use windows::Win32::Foundation::WAIT_FAILED;
         use windows::Win32::UI::WindowsAndMessaging::{
             MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, QS_ALLINPUT,
         };
         // SAFETY: MsgWaitForMultipleObjectsEx with an empty handle slice and
         // QS_ALLINPUT is safe to call on the UI thread.
-        let _ = unsafe {
+        let waited = unsafe {
             MsgWaitForMultipleObjectsEx(Some(&[]), timeout_ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE)
         };
+        if waited == WAIT_FAILED {
+            // A failed wait returns at once, so the loop spins a core at 100%
+            // while everything still appears to work — the one failure here
+            // that must leave a trace.
+            tracing::warn!("pump: MsgWaitForMultipleObjectsEx failed; message wait skipped");
+        }
     }
     #[cfg(not(windows))]
     std::thread::sleep(std::time::Duration::from_millis(u64::from(timeout_ms)));
