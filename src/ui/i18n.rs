@@ -191,29 +191,4 @@ pub fn tr(key: &str, lang: Lang) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::Lang;
-
-    #[test]
-    fn i18n_zh_en() {
-        assert_eq!(tr("mute", Lang::Zh), "全局静音");
-        assert_eq!(tr("mute", Lang::En), "Mute");
-        assert_eq!(tr("volume_limit", Lang::Zh), "音量上限");
-        assert_eq!(tr("volume_limit", Lang::En), "Volume Limit");
-        assert_eq!(tr("output_devices", Lang::Zh), "音频输出设备");
-        assert_eq!(tr("output_devices", Lang::En), "Output Devices");
-        assert_eq!(tr("input_devices", Lang::Zh), "音频输入设备");
-        assert_eq!(tr("input_devices", Lang::En), "Input Devices");
-    }
-
-    #[test]
-    fn hotkey_settings_labels() {
-        assert_eq!(tr("open_hotkey_settings", Lang::Zh), "打开快捷键设置");
-        assert_eq!(tr("open_hotkey_settings", Lang::En), "Open Hotkey Settings");
-        assert_ne!(tr("config_error", Lang::Zh), "config_error");
-        assert_ne!(tr("config_error", Lang::En), "config_error");
-        assert_ne!(tr("no_devices", Lang::Zh), "no_devices");
-        assert_ne!(tr("no_devices", Lang::En), "no_devices");
-    }
-}
+mod tests;
