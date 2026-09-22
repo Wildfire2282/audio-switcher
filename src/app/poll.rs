@@ -15,6 +15,11 @@ use crate::ui::WheelState;
 use super::{App, HOOK_RETRY_WAIT};
 use crate::platform::hotkey;
 
+/// Device notifications are coalesced over this window before the menu is
+/// rebuilt: `IMMNotificationClient` reports Added/Removed/DefaultChanged for a
+/// single change in quick succession.
+const DEVICE_COALESCE_WINDOW: Duration = Duration::from_millis(120);
+
 impl<B: AudioBackend> App<B> {
     pub(super) fn maybe_install_hook(&mut self) {
         if self.hook.is_some() || Instant::now() < self.hook_install_at {
@@ -112,7 +117,7 @@ impl<B: AudioBackend> App<B> {
         // coalesce bursts: IMMNotificationClient may fire Added/Removed/DefaultChanged in quick succession.
         // The notification stays latched in `devices_pending` so the deferred
         // rebuild is not lost.
-        if self.last_devices_rebuild.elapsed() < Duration::from_millis(120) {
+        if self.last_devices_rebuild.elapsed() < DEVICE_COALESCE_WINDOW {
             return;
         }
         self.devices_pending = false;
@@ -167,15 +172,36 @@ impl<B: AudioBackend> App<B> {
     }
     /// Wait timeout for this iteration.
     ///
-    /// The idle cap, shortened to the overlay's remaining time so a hide is
-    /// never late by more than the wake granularity.
+    /// The earliest instant the loop must not sleep past — the overlay's hide,
+    /// a pending hook install, a coalesced device rebuild — capped by the idle
+    /// timeout so a lost wake still self-heals.
     pub(super) fn wait_timeout(&self) -> u32 {
-        let Some(deadline) = self.osd_deadline else {
-            return pump::PUMP_WAIT_MS;
-        };
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        u32::try_from(remaining.as_millis())
-            .unwrap_or(pump::PUMP_WAIT_MS)
-            .min(pump::PUMP_WAIT_MS)
+        let mut next = self.osd_deadline;
+        let mut add = |at: Instant| next = Some(next.map_or(at, |cur| cur.min(at)));
+        if self.hook.is_none() {
+            add(self.hook_install_at);
+        }
+        if self.devices_pending {
+            add(self.last_devices_rebuild + DEVICE_COALESCE_WINDOW);
+        }
+        wait_ms(Instant::now(), next)
     }
 }
+
+/// Milliseconds to wait for `next`, rounded up and capped at
+/// [`pump::PUMP_IDLE_MS`].
+///
+/// Rounding up is not cosmetic: truncating a sub-millisecond remainder to `0`
+/// hands `MsgWaitForMultipleObjectsEx` a zero timeout, which turns the sleep
+/// into a spin.
+fn wait_ms(now: Instant, next: Option<Instant>) -> u32 {
+    let Some(next) = next else {
+        return pump::PUMP_IDLE_MS;
+    };
+    let remaining = next.saturating_duration_since(now);
+    let millis = remaining.as_micros().div_ceil(1_000);
+    u32::try_from(millis.min(u128::from(pump::PUMP_IDLE_MS))).unwrap_or(pump::PUMP_IDLE_MS)
+}
+
+#[cfg(test)]
+mod tests;

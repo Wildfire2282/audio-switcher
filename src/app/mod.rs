@@ -217,6 +217,10 @@ impl<B: AudioBackend> App<B> {
 
     /// Run the message loop until `Exit` is requested.
     pub fn run(mut self) {
+        // Before the loop: the audio callbacks started at assembly already post
+        // to this channel, and every wake before it exists is just lost until
+        // the idle timeout.
+        pump::init_wake_channel();
         loop {
             pump::pump_messages();
             if self.should_exit {

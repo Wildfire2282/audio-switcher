@@ -194,6 +194,7 @@ unsafe extern "system" fn volume_on_notify(
         return S_OK;
     }
     VOLUME_CHANGED.store(true, AtomicOrdering::Release);
+    crate::platform::pump::wake();
     S_OK
 }
 
@@ -239,6 +240,50 @@ pub(super) static VOLUME_NOTIFY_ID: Mutex<Option<String>> = Mutex::new(None);
 #[cfg(windows)]
 static VOLUME_REREGISTER: AtomicBool = AtomicBool::new(false);
 
+/// Wakes the re-registration worker instead of it polling once a second.
+///
+/// `notify_one` without the lock may be missed by a worker that is not waiting
+/// yet; the wait's own timeout is what makes that harmless, which is why the
+/// flag above (not this signal) carries the request.
+#[cfg(windows)]
+static REREG_CV: std::sync::LazyLock<(Mutex<()>, std::sync::Condvar)> =
+    std::sync::LazyLock::new(|| (Mutex::new(()), std::sync::Condvar::new()));
+
+/// Activate the default render endpoint and register the volume callback on it.
+///
+/// Returns the live `(endpoint id, interface)` pair: keeping the interface alive
+/// is what keeps the registration alive. `None` on any failure, which leaves the
+/// caller's `current` empty so the next pass retries.
+///
+/// # Safety
+///
+/// Must run on a thread with COM initialized (the MTA worker).
+#[cfg(windows)]
+unsafe fn activate_volume_callback() -> Option<(String, IAudioEndpointVolume)> {
+    // SAFETY: the caller guarantees an initialized apartment on this thread.
+    unsafe {
+        let enumerator =
+            CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)
+                .ok()?;
+        let dev = enumerator
+            .GetDefaultAudioEndpoint(eRender, eMultimedia)
+            .ok()?;
+        let id = WasapiBackend::device_id(&dev).ok()?;
+        let vol = dev
+            .Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
+            .ok()?;
+        let callback = if let Some(holder) = VOLUME_CALLBACK.get() {
+            holder.0.clone()
+        } else {
+            let cb = create_volume_callback();
+            let _ = VOLUME_CALLBACK.set(VolumeCallbackHolder(cb.clone()));
+            cb
+        };
+        vol.RegisterControlChangeNotify(&callback).ok()?;
+        Some((id, vol))
+    }
+}
+
 /// Spawn the process-lifetime MTA worker that owns the volume-callback
 /// registration.
 ///
@@ -262,61 +307,61 @@ pub(super) fn spawn_volume_notify_worker() {
     if STARTED.set(()).is_err() {
         return;
     }
-    let _ = std::thread::Builder::new().name("volume-notify".into()).spawn(|| {
-        use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
-        // SAFETY: CoInitializeEx MTA on a dedicated worker thread; the
-        // thread lives for the process lifetime, so CoUninitialize is never
-        // needed.
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        }
-        // Live registration: keeping the endpoint-volume interface alive is
-        // what keeps the callback registration alive.
-        let mut current: Option<(String, IAudioEndpointVolume)> = None;
-        loop {
-            std::thread::sleep(Duration::from_millis(1000));
-            // Already registered and no re-register requested → nothing to do.
-            // When `current` is `None` the `||` short-circuits, preserving a
-            // pending re-register flag for the iteration that succeeds.
-            let needs_register =
-                current.is_none() || VOLUME_REREGISTER.swap(false, AtomicOrdering::AcqRel);
-            if !needs_register {
-                continue;
-            }
-            // Drop the old instance — its registration dies with it.
-            current = None;
-            *VOLUME_NOTIFY_ID.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-            // SAFETY: standard WASAPI calls on an initialized MTA thread.
+    let _ = std::thread::Builder::new()
+        .name("volume-notify".into())
+        .spawn(|| {
+            use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
+            // SAFETY: CoInitializeEx MTA on a dedicated worker thread; the
+            // thread lives for the process lifetime, so CoUninitialize is never
+            // needed.
             unsafe {
-                let Ok(enumerator) = CoCreateInstance::<_, IMMDeviceEnumerator>(
-                    &MMDeviceEnumerator,
-                    None,
-                    CLSCTX_ALL,
-                ) else {
-                    continue;
-                };
-                let Ok(dev) = enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia) else {
-                    continue;
-                };
-                let Ok(id) = WasapiBackend::device_id(&dev) else { continue };
-                let Ok(vol) = dev.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None) else {
-                    continue;
-                };
-                let callback = if let Some(holder) = VOLUME_CALLBACK.get() {
-                    holder.0.clone()
-                } else {
-                    let cb: windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolumeCallback =
-                        create_volume_callback();
-                    let _ = VOLUME_CALLBACK.set(VolumeCallbackHolder(cb.clone()));
-                    cb
-                };
-                if vol.RegisterControlChangeNotify(&callback).is_ok() {
-                    current = Some((id.clone(), vol));
-                    *VOLUME_NOTIFY_ID.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(id);
-                }
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
             }
-        }
-    });
+            // Live registration: keeping the endpoint-volume interface alive is
+            // what keeps the callback registration alive.
+            let mut current: Option<(String, IAudioEndpointVolume)> = None;
+            loop {
+                // Register when nothing is live, or when the default endpoint
+                // changed. `current.is_none()` short-circuits so a pending request
+                // survives to the pass that succeeds.
+                let live = if current.is_none()
+                    || VOLUME_REREGISTER.swap(false, AtomicOrdering::AcqRel)
+                {
+                    // Drop the old instance first — its registration dies with it,
+                    // and the new registration must not be made while it is live.
+                    drop(current.take());
+                    *VOLUME_NOTIFY_ID
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                    // SAFETY: this thread initialized COM above.
+                    current = unsafe { activate_volume_callback() };
+                    if let Some((id, _)) = &current {
+                        *VOLUME_NOTIFY_ID
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(id.clone());
+                    }
+                    current.is_some()
+                } else {
+                    true
+                };
+                // A failing registration retried once a second (the pace this loop
+                // always had); a live one waits for the next request, with a minute
+                // cap so a lost signal still self-heals.
+                let wait = if live {
+                    Duration::from_secs(60)
+                } else {
+                    Duration::from_secs(1)
+                };
+                let (lock, cv) = &*REREG_CV;
+                let guard = lock
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                drop(
+                    cv.wait_timeout(guard, wait)
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                );
+            }
+        });
 }
 
 /// Endpoint-notification client (`IMMNotificationClient`) as a manual COM
@@ -383,6 +428,7 @@ unsafe extern "system" fn device_on_state_changed(
 ) -> windows::core::HRESULT {
     use windows::Win32::Foundation::S_OK;
     DEVICE_CHANGED.store(true, AtomicOrdering::Release);
+    crate::platform::pump::wake();
     S_OK
 }
 
@@ -393,6 +439,7 @@ unsafe extern "system" fn device_on_added(
 ) -> windows::core::HRESULT {
     use windows::Win32::Foundation::S_OK;
     DEVICE_CHANGED.store(true, AtomicOrdering::Release);
+    crate::platform::pump::wake();
     S_OK
 }
 
@@ -403,6 +450,7 @@ unsafe extern "system" fn device_on_removed(
 ) -> windows::core::HRESULT {
     use windows::Win32::Foundation::S_OK;
     DEVICE_CHANGED.store(true, AtomicOrdering::Release);
+    crate::platform::pump::wake();
     S_OK
 }
 
@@ -419,10 +467,12 @@ unsafe extern "system" fn device_on_default_changed(
     // callback thread: the id is informational only, so a contended
     // lock is simply skipped — the worker clears/sets it itself.
     VOLUME_REREGISTER.store(true, AtomicOrdering::Release);
+    REREG_CV.1.notify_one();
     if let Ok(mut id) = VOLUME_NOTIFY_ID.try_lock() {
         *id = None;
     }
     DEVICE_CHANGED.store(true, AtomicOrdering::Release);
+    crate::platform::pump::wake();
     S_OK
 }
 
@@ -442,6 +492,7 @@ unsafe extern "system" fn device_on_property_changed(
         return S_OK;
     }
     DEVICE_CHANGED.store(true, AtomicOrdering::Release);
+    crate::platform::pump::wake();
     S_OK
 }
 
