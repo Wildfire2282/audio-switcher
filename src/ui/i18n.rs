@@ -123,13 +123,6 @@ pub fn tr(key: &str, lang: Lang) -> String {
                 "Muted".into()
             }
         }
-        "about_text" => {
-            if zh {
-                "Audio Switcher — 托盘音频切换工具\n纯 Rust 托盘工具\n\n右键菜单切换设备，中键静音，悬停滚轮调音量。".into()
-            } else {
-                "Audio Switcher — Tray audio switcher\nPure Rust tray tool\n\nRight-click to switch device, middle-click to mute, hover+wheel to adjust volume.".into()
-            }
-        }
         "refresh" => {
             if zh {
                 "刷新设备列表".into()
