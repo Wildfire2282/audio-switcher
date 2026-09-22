@@ -107,7 +107,8 @@ impl<B: AudioBackend> App<B> {
     }
 
     pub(super) fn handle_menu(&mut self, id: &str) {
-        match MenuAction::from_id(id) {
+        let action = MenuAction::from_id(id);
+        match action {
             MenuAction::Device(dev_id) => self.set_default_output(&dev_id),
             MenuAction::InputDevice(dev_id) => self.set_default_input(&dev_id),
             MenuAction::Mute => self.toggle_mute(),
@@ -144,19 +145,16 @@ impl<B: AudioBackend> App<B> {
                 );
             }
             MenuAction::Autostart(mode) => self.apply_autostart_mode(mode),
-            MenuAction::LangSystem => {
-                self.cfg.lang = Lang::System;
+            MenuAction::LangSystem | MenuAction::LangZh | MenuAction::LangEn => {
+                // The three entries differ only in the value they store, and all
+                // three re-resolve the effective language (`System` through the
+                // OS locale, the other two to themselves).
+                self.cfg.lang = match &action {
+                    MenuAction::LangZh => Lang::Zh,
+                    MenuAction::LangEn => Lang::En,
+                    _ => Lang::System,
+                };
                 self.ui_lang = self.cfg.effective_lang();
-                self.save_and_refresh(false);
-            }
-            MenuAction::LangZh => {
-                self.cfg.lang = Lang::Zh;
-                self.ui_lang = Lang::Zh;
-                self.save_and_refresh(false);
-            }
-            MenuAction::LangEn => {
-                self.cfg.lang = Lang::En;
-                self.ui_lang = Lang::En;
                 self.save_and_refresh(false);
             }
             MenuAction::About => {
