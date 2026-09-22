@@ -178,9 +178,9 @@ fn text_width(dc: HDC, text: &str) -> i32 {
 
 /// GDI objects backing one card.
 ///
-/// Created in one `unsafe` block and restored/released in another, so no
-/// safe layout logic has to sit inside `unsafe` while every object is still
-/// released exactly once.
+/// Created in one `unsafe` block and released on drop in another, so no safe
+/// layout logic has to sit inside `unsafe` while every object is still released
+/// exactly once — including when the paint returns early.
 struct Buffer {
     dc: HDC,
     bmp: HBITMAP,
@@ -192,6 +192,74 @@ struct Buffer {
     /// Sized for the widest read-out the language can produce rather than
     /// for the text on screen, so the slider keeps one length.
     state_col: i32,
+}
+
+impl Buffer {
+    /// Create the buffer DC, its bitmap and the card's font.
+    ///
+    /// `None` when GDI refuses one of them: painting a blank card and saying
+    /// nothing left the failure invisible. Everything created before the
+    /// refusal is released here, so a failed paint leaks no handle.
+    ///
+    /// # Safety
+    ///
+    /// `hdc` must be a live device context.
+    unsafe fn new(hdc: HDC, w: i32, h: i32, dpi: i32, content: &OsdContent) -> Option<Self> {
+        // SAFETY: the caller guarantees `hdc` is live; every handle is
+        // checked for null before it is selected into the DC or released.
+        unsafe {
+            let dc = CreateCompatibleDC(Some(hdc));
+            if dc.0.is_null() {
+                tracing::warn!("osd: GDI allocation failed: CreateCompatibleDC");
+                return None;
+            }
+            let bmp = CreateCompatibleBitmap(hdc, w, h);
+            if bmp.0.is_null() {
+                let _ = DeleteDC(dc);
+                tracing::warn!("osd: GDI allocation failed: CreateCompatibleBitmap");
+                return None;
+            }
+            let old_bmp = SelectObject(dc, HGDIOBJ(bmp.0));
+            let (font, old_font) = select_card_font(dc, dpi);
+            if font.0.is_null() {
+                // The bitmap has to come back out before it can be deleted.
+                SelectObject(dc, old_bmp);
+                let _ = DeleteObject(HGDIOBJ(bmp.0));
+                let _ = DeleteDC(dc);
+                tracing::warn!("osd: GDI allocation failed: card font");
+                return None;
+            }
+            let _ = SetBkMode(dc, TRANSPARENT);
+            // Reserve the column for the widest read-out this language can
+            // show, never for the text on screen: measuring that made the
+            // slider shorten as the read-out grew (`5%` → `50%` → `100%`).
+            let state_col =
+                text_width(dc, WIDEST_PERCENT).max(text_width(dc, &content.muted_label));
+            Some(Self {
+                dc,
+                bmp,
+                old_bmp,
+                font,
+                old_font,
+                state_col,
+            })
+        }
+    }
+}
+
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        // SAFETY: every handle came out of `Buffer::new` and is still live.
+        // Both owned objects are selected out before they are deleted, which
+        // Windows requires; the restored stock objects are not ours to delete.
+        unsafe {
+            SelectObject(self.dc, self.old_font);
+            SelectObject(self.dc, self.old_bmp);
+            let _ = DeleteObject(HGDIOBJ(self.font.0));
+            let _ = DeleteObject(HGDIOBJ(self.bmp.0));
+            let _ = DeleteDC(self.dc);
+        }
+    }
 }
 
 /// A GDI object selected into a DC, restored and released on drop.
@@ -253,35 +321,18 @@ pub(super) fn draw_card(hdc: HDC, content: &OsdContent, dpi: i32) {
     let pill = scale(BAR_H, dpi);
     let hairline = scale(1, dpi).max(1);
 
-    // SAFETY: creates the buffer DC, its bitmap and the card's font. The
-    // objects selected here are restored and released in the drawing block
-    // below, which runs on every path; `hdc` is a live DC from the caller.
-    let buf = unsafe {
-        let dc = CreateCompatibleDC(Some(hdc));
-        let bmp = CreateCompatibleBitmap(hdc, w, h);
-        let old_bmp = SelectObject(dc, HGDIOBJ(bmp.0));
-        let (font, old_font) = select_card_font(dc, dpi);
-        let _ = SetBkMode(dc, TRANSPARENT);
-        // Reserve the column for the widest read-out this language can
-        // show, never for the text on screen: measuring that made the
-        // slider shorten as the read-out grew (`5%` → `50%` → `100%`).
-        let state_col = text_width(dc, WIDEST_PERCENT).max(text_width(dc, &content.muted_label));
-        Buffer {
-            dc,
-            bmp,
-            old_bmp,
-            font,
-            old_font,
-            state_col,
-        }
+    // SAFETY: `hdc` is a live DC from the caller; `Buffer` releases every
+    // object it created when it goes out of scope on every path below.
+    let Some(buf) = (unsafe { Buffer::new(hdc, w, h, dpi, content) }) else {
+        return;
     };
 
     let l = layout::layout(w, h, dpi, buf.state_col, content);
 
     // SAFETY: `buf` owns live GDI objects created above. Each `Selected`
     // guard restores and releases exactly the object it selected, so nothing
-    // is released while still selected; the buffer's own objects are restored
-    // and released exactly once below.
+    // is released while still selected; the buffer's own objects are released
+    // by its `Drop` when this function returns.
     unsafe {
         // Everything outside the rounded card stays the colour key, which
         // the layered window keys out, so the corners are transparent rather
@@ -383,11 +434,5 @@ pub(super) fn draw_card(hdc: HDC, content: &OsdContent, dpi: i32) {
         );
 
         let _ = BitBlt(hdc, 0, 0, w, h, Some(buf.dc), 0, 0, SRCCOPY);
-
-        SelectObject(buf.dc, buf.old_font);
-        SelectObject(buf.dc, buf.old_bmp);
-        let _ = DeleteObject(HGDIOBJ(buf.font.0));
-        let _ = DeleteObject(HGDIOBJ(buf.bmp.0));
-        let _ = DeleteDC(buf.dc);
     }
 }
