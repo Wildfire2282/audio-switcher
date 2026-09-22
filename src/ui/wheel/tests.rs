@@ -40,9 +40,10 @@ fn wheel_state_progression() {
 fn wheel_i32_min() {
     let mut ws = WheelState::new();
     let b = Instant::now();
-    // Should not panic
+    // The extreme delta saturates to the largest representable tick count, so
+    // the accelerated step is the maximum one, not one of three values.
     let s = ws.push(b, i32::MIN);
-    assert!(s == 1 || s == 2 || s == 5);
+    assert_eq!(s, 5);
     assert_eq!(WheelState::total_step(i32::MIN, 1), i32::MIN / 120);
 }
 

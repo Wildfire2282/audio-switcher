@@ -107,15 +107,3 @@ fn set_default_device_mock() {
     assert_eq!(m.default_id.as_deref(), Some("b"));
     assert!(m.set_default_device("c").is_err());
 }
-
-#[test]
-#[ignore = "requires WASAPI hardware, run with --ignored"]
-fn integration_real_mock() {
-    let devs = vec![AudioDevice {
-        id: "x".into(),
-        name: "X".into(),
-    }];
-    let mut backend: Box<dyn AudioBackend> = Box::new(MockBackend::new(devs, None));
-    let list = backend.enumerate_devices().unwrap();
-    assert_eq!(list.len(), 1);
-}

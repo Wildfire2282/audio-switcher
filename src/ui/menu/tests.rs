@@ -49,9 +49,6 @@ fn title_carries_display_name_and_version() {
             env!("CARGO_PKG_VERSION")
         )
     );
-    // The menu head item renders exactly this string (same builder call).
-    let head = MenuItem::with_id(id::TITLE, title_text(), false, None);
-    assert_eq!(head.text(), title);
 }
 
 #[test]

@@ -92,12 +92,10 @@ fn explicit_modes_survive_effective() {
     };
     assert_eq!(zh.effective_lang(), Lang::Zh);
     assert_eq!(en.effective_lang(), Lang::En);
-    // System resolves without panicking (value depends on the test machine).
+    // System resolves through the OS locale and nowhere else; the enumeration
+    // this replaced accepted every variant, so it asserted nothing.
     let sys = AppConfig::default();
-    assert!(matches!(
-        sys.effective_lang(),
-        Lang::Zh | Lang::En | Lang::System
-    ));
+    assert_eq!(sys.effective_lang(), Lang::system());
 }
 
 #[test]
