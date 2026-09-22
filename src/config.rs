@@ -283,9 +283,17 @@ impl Default for AppConfig {
 /// `config.json` is JSONC: `//` line comments and `/* */` blocks are stripped
 /// on load, so users can keep notes. All hotkeys are unbound by default;
 /// editing is manual only (no menu toggles).
-pub const CONFIG_COMMENT_HEADER: &str = "// AudioSwitcher config — edit, save, then restart the app to apply.\n\
+///
+/// Takes the path this file is actually being written to: the lookup chain
+/// falls back to `%LOCALAPPDATA%` and then to temp, and the Location line used
+/// to name `%APPDATA%` unconditionally — pointing the user at a file that does
+/// not exist on exactly the machines where they need to find it.
+#[must_use]
+pub fn config_comment_header(path: &Path) -> String {
+    format!(
+        "// AudioSwitcher config — edit, save, then restart the app to apply.\n\
     // 配置文件 — 改完保存后重启生效。\n\
-    // Location / 位置: %APPDATA%\\audio-switcher\\config.json\n\
+    // Location / 位置: {}\n\
     // Language / 语言: \"system\" (follow OS / 跟随系统), \"zh\", \"en\".\n\
     // Volume limit / 音量上限: \"volume_limit_enabled\" true/false, \"volume_limit\" 1-100.\n\
     // Autostart / 开机自启: \"autostart_mode\" = \"off\" | \"user\" (Run value / 注册表启动) | \"admin\" (elevated logon task / 管理员权限登录任务).\n\
@@ -303,9 +311,12 @@ pub const CONFIG_COMMENT_HEADER: &str = "// AudioSwitcher config — edit, save,
     //     \"next_device\"  Next output device / 下一个输出设备\n\
     //     \"prev_device\"  Previous output device / 上一个输出设备\n\
     //   Example / 示例:\n\
-    //     \"hotkeys\": { \"mute\": \"Ctrl+Alt+M\", \"volume_up\": \"Ctrl+Alt+Up\", \"volume_down\": \"Ctrl+Alt+Down\", \"next_device\": null, \"prev_device\": null }\n\
+    //     \"hotkeys\": {{ \"mute\": \"Ctrl+Alt+M\", \"volume_up\": \"Ctrl+Alt+Up\", \"volume_down\": \"Ctrl+Alt+Down\", \"next_device\": null, \"prev_device\": null }}\n\
     //   A combination owned by another program is disabled with a dialog; the rest keep working.\n\
-    //   被其他程序占用的组合会弹窗并自动禁用，其余照常工作。\n";
+    //   被其他程序占用的组合会弹窗并自动禁用，其余照常工作。\n",
+        path.display()
+    )
+}
 
 /// Strip `//` line comments and `/* */` blocks outside strings (JSONC).
 ///
@@ -504,7 +515,7 @@ impl AppConfig {
     /// Parse `bytes` read from `path`, migrating and validating. Unknown
     /// fields or corrupt JSON back the file up and reset to defaults (loud,
     /// never silent). Leading `//` / `/* */` comments are stripped first
-    /// (see [`CONFIG_COMMENT_HEADER`]).
+    /// (see [`config_comment_header`]).
     fn load_from_bytes(bytes: &[u8], path: &Path) -> Self {
         let stripped = strip_json_comments(bytes);
         match serde_json::from_slice::<Self>(&stripped) {
@@ -578,7 +589,7 @@ impl AppConfig {
     /// Synchronous atomic save: write to a unique temporary file alongside the
     /// target then rename. The unique suffix avoids races between concurrent
     /// callers. Warns when writing to the degraded temp fallback.
-    /// The file is JSONC: [`CONFIG_COMMENT_HEADER`] is written above the JSON
+    /// The file is JSONC: [`config_comment_header`] is written above the JSON
     /// body so users learn the manual hotkey format in place.
     ///
     /// # Errors
@@ -598,7 +609,7 @@ impl AppConfig {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(self).expect("AppConfig serialization never fails");
-        let body = format!("{CONFIG_COMMENT_HEADER}\n{json}\n");
+        let body = format!("{}\n{json}\n", config_comment_header(path));
         let tmp_path = {
             static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let file_name = path

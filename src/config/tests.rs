@@ -399,6 +399,15 @@ fn saved_file_carries_bilingual_hotkey_guidance() {
 }
 
 #[test]
+fn header_names_the_file_that_was_written() {
+    // The lookup chain falls back to `%LOCALAPPDATA%` and then to temp, so a
+    // hard-coded location line names a file that may not exist.
+    let header = config_comment_header(Path::new(r"X:\y\config.json"));
+    assert!(header.contains(r"X:\y\config.json"), "{header}");
+    assert!(header.contains("Hotkeys / 快捷键"), "{header}");
+}
+
+#[test]
 fn line_and_block_comments_are_stripped_outside_strings() {
     let (cfg, _dir) = load_raw(
         "// leading note\n{\"version\":3,\"lang\":\"en\",/* block \n note */\"volume_limit_enabled\":true,\"volume_limit\":25,\"autostart\":true,\n\"hotkeys\":{\"mute\":\"Ctrl+Alt+M\" // trailing note\n}}",
