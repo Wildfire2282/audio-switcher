@@ -146,7 +146,9 @@ impl<B: AudioBackend> App<B> {
     /// mute clears the stale overlay first and the mute feedback that follows
     /// still shows.
     pub(super) fn poll_click(&mut self) {
-        if mouse_hook::take_click() {
+        // `osd_deadline` tracks visibility: `show_osd` sets it, `hide_osd` and
+        // the deadline clear it. Nothing on screen means no call to make.
+        if mouse_hook::take_click() && self.osd_deadline.is_some() {
             self.hide_osd();
         }
     }
