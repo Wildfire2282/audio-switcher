@@ -28,30 +28,52 @@ fn max_level() -> tracing::Level {
     }
 }
 
+/// Why the log file could not be opened, when it could not.
+///
+/// Kept for the panic hook: at that point there is no subscriber to log
+/// through, and the crash report is the last channel that still works.
+static INIT_FAILURE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Tail appended to the crash report when the log file was never opened.
+///
+/// Without it the dialog reads like any other crash, next to a log directory
+/// the user will search and find nothing in.
+fn failure_note(failure: Option<&str>) -> String {
+    match failure {
+        Some(why) => format!("\n\n(log file unavailable: {why})"),
+        None => String::new(),
+    }
+}
+
 /// Install the `%LOCALAPPDATA%\<tool>\logs\` file sink and the
 /// show-dialog-and-exit panic hook. Idempotent best effort: when the log
 /// file cannot be opened, diagnostics still reach the dialog on panic.
 pub fn init() {
     let log_path = log_file_path();
-
-    let file = log_path
-        .parent()
-        .map(std::fs::create_dir_all)
-        .and(std::fs::File::create(&log_path).ok());
-    if let Some(file) = file {
-        // File sink only: `windows_subsystem = "windows"` detaches stdio, so
-        // a console layer would be invisible; the file is the record.
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(max_level())
-            .with_writer(std::sync::Mutex::new(file))
-            .finish();
-        let _ = tracing::subscriber::set_global_default(subscriber);
+    if let Some(parent) = log_path.parent() {
+        // Best effort: the `File::create` below is what reports a real failure.
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::File::create(&log_path) {
+        Ok(file) => {
+            // File sink only: `windows_subsystem = "windows"` detaches stdio, so
+            // a console layer would be invisible; the file is the record.
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(max_level())
+                .with_writer(std::sync::Mutex::new(file))
+                .finish();
+            let _ = tracing::subscriber::set_global_default(subscriber);
+        }
+        Err(e) => {
+            let _ = INIT_FAILURE.set(e.to_string());
+        }
     }
 
     std::panic::set_hook(Box::new(|info| {
         let msg = format!(
-            "{} hit an unexpected error and must exit.\n\n{info}",
-            crate::TOOL_DISPLAY_NAME
+            "{} hit an unexpected error and must exit.\n\n{info}{}",
+            crate::TOOL_DISPLAY_NAME,
+            failure_note(INIT_FAILURE.get().map(String::as_str))
         );
         tracing::error!("panic: {info}");
         crate::platform::dialog::show_critical(&msg);
@@ -75,3 +97,6 @@ fn log_dir() -> std::path::PathBuf {
         .map_or_else(|_| std::env::temp_dir(), std::path::PathBuf::from);
     base.join(crate::TOOL_ID).join("logs")
 }
+
+#[cfg(test)]
+mod tests;
