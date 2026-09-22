@@ -509,9 +509,17 @@ impl AppConfig {
         }
     }
 
-    /// Migrate older schemas: bump the version, clamp the limit, move the v1
-    /// `Zh` default to `System`, fold the v3 autostart boolean into
+    /// Migrate older schemas: bump the version, reset an out-of-range limit,
+    /// move the v1 `Zh` default to `System`, fold the v3 autostart boolean into
     /// `autostart_mode`, and canonicalize the hotkey combos.
+    ///
+    /// The limit is *reset* to the default, never clamped to the nearest bound:
+    /// a value outside `1..=100` is only reachable by hand-editing, so it says
+    /// nothing about which limit the user meant, and picking one for them would
+    /// silently move their volume ceiling. `default_version` makes the same
+    /// choice in the other direction: a file with no `version` field is parsed
+    /// as the current schema and left unmigrated, because there is no older
+    /// schema it can be shown to belong to.
     fn migrate(mut cfg: Self) -> Self {
         // Scope to v1: that schema could not tell an explicit `zh` choice
         // apart from its own default, so its `zh` re-picks once. From v2 on,
@@ -533,6 +541,7 @@ impl AppConfig {
         cfg.legacy_autostart = None;
         cfg.version = CURRENT_VERSION;
         if !(1..=100).contains(&cfg.volume_limit) {
+            // Reset, never clamped: the doc comment above says why.
             cfg.volume_limit = default_volume_limit();
         }
         cfg.hotkeys.normalize();
