@@ -16,9 +16,8 @@
 use super::layout;
 use super::{BAR_H, CARD_H, CARD_W, FALLBACK_TEXT_PX, KEY_RGB, RADIUS, rgb, scale};
 use crate::platform::theme;
-use crate::platform::utf16::wide;
 use crate::ui::osd::{OsdContent, Palette, WIDEST_PERCENT, palette};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, CreateCompatibleBitmap, CreateCompatibleDC,
@@ -52,6 +51,25 @@ thread_local! {
     /// The shell's menu font, cached alongside the tokens: it changes with
     /// the same notification.
     static MENU_FONT: Cell<Cached<LOGFONTW>> = const { Cell::new(Cached::Pending) };
+    /// Scratch buffer for the UTF-16 form of the strings GDI is about to draw.
+    ///
+    /// Each `DrawTextW`/`DT_CALCRECT` call used to allocate its own `Vec`, four
+    /// times per painted card, on a path that runs once per wheel notch.
+    static WIDE_BUF: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Encode `text` into the shared buffer and hand it to `f`.
+///
+/// No NUL terminator: `DrawTextW` is told the length, and a terminator there
+/// would be drawn as a stray glyph (see [`crate::platform::utf16`]). Not
+/// re-entrant, and does not need to be: the paint path draws one string at a
+/// time.
+fn with_wide<R>(text: &str, f: impl FnOnce(&mut [u16]) -> R) -> R {
+    WIDE_BUF.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        crate::platform::utf16::wide_into(&mut buf, text);
+        f(&mut buf)
+    })
 }
 
 /// Drop the cached tokens and font.
@@ -161,19 +179,20 @@ fn select_card_font(dc: HDC, dpi: i32) -> (HFONT, HGDIOBJ) {
 ///
 /// `DT_CALCRECT` measures into the `RECT` instead of drawing.
 fn text_width(dc: HDC, text: &str) -> i32 {
-    let mut buf = wide(text);
-    let mut rect = RECT::default();
-    // SAFETY: `dc` is live with the card font selected, `buf` is
-    // NUL-terminated, and `DT_CALCRECT` makes `rect` the measured box.
-    let _ = unsafe {
-        DrawTextW(
-            dc,
-            &mut buf,
-            &mut rect,
-            DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX,
-        )
-    };
-    rect.right - rect.left
+    with_wide(text, |buf| {
+        let mut rect = RECT::default();
+        // SAFETY: `dc` is live with the card font selected, `buf` is
+        // NUL-terminated, and `DT_CALCRECT` makes `rect` the measured box.
+        let _ = unsafe {
+            DrawTextW(
+                dc,
+                buf,
+                &mut rect,
+                DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX,
+            )
+        };
+        rect.right - rect.left
+    })
 }
 
 /// GDI objects backing one card.
@@ -414,24 +433,29 @@ pub(super) fn draw_card(hdc: HDC, content: &OsdContent, dpi: i32) {
         // no default device is known.
         let _ = SetTextColor(buf.dc, rgb(tokens.text));
         if !content.device.is_empty() {
-            let mut name = wide(&content.device);
-            let mut rect = l.name;
+            with_wide(&content.device, |name| {
+                let mut rect = l.name;
+                // SAFETY: `buf.dc` is live with the card font selected and
+                // `name` is NUL-terminated; `rect` is the measured target box.
+                let _ = DrawTextW(
+                    buf.dc,
+                    name,
+                    &mut rect,
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS,
+                );
+            });
+        }
+        let _ = SetTextColor(buf.dc, rgb(tokens.dim_text));
+        with_wide(&content.state, |state| {
+            let mut rect = l.state;
+            // SAFETY: as above, with the right-aligned state box.
             let _ = DrawTextW(
                 buf.dc,
-                &mut name,
+                state,
                 &mut rect,
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS,
+                DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
             );
-        }
-        let mut state = wide(&content.state);
-        let mut rect = l.state;
-        let _ = SetTextColor(buf.dc, rgb(tokens.dim_text));
-        let _ = DrawTextW(
-            buf.dc,
-            &mut state,
-            &mut rect,
-            DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
-        );
+        });
 
         let _ = BitBlt(hdc, 0, 0, w, h, Some(buf.dc), 0, 0, SRCCOPY);
     }

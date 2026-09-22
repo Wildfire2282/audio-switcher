@@ -159,19 +159,22 @@ mod win {
     /// the tray, the wheel, and the menu. So the pair is called even when there
     /// is nothing to draw.
     fn paint(hwnd: HWND) {
-        let content = PAINT.with(|p| p.borrow().as_ref().map(|j| (j.content.clone(), j.dpi)));
-        // SAFETY: `BeginPaint`/`EndPaint` bracket this call on the live window
-        // and run on every path.
-        unsafe {
-            let mut ps = PAINTSTRUCT::default();
-            let hdc = BeginPaint(hwnd, &mut ps);
-            if !hdc.0.is_null() {
-                if let Some((content, dpi)) = content {
-                    draw_card(hdc, &content, dpi);
+        PAINT.with(|p| {
+            // SAFETY: `BeginPaint`/`EndPaint` bracket this call on the live window
+            // and run on every path.
+            unsafe {
+                let mut ps = PAINTSTRUCT::default();
+                let hdc = BeginPaint(hwnd, &mut ps);
+                // Borrowed, not cloned: the job's strings were copied once per
+                // paint (once per wheel notch) only to satisfy the borrow checker.
+                if !hdc.0.is_null() {
+                    if let Some(job) = p.borrow().as_ref() {
+                        draw_card(hdc, &job.content, job.dpi);
+                    }
                 }
+                let _ = EndPaint(hwnd, &ps);
             }
-            let _ = EndPaint(hwnd, &ps);
-        }
+        });
     }
 
     /// Window procedure: paint, and never intercept input.
