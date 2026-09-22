@@ -12,11 +12,6 @@ static WHEEL_PENDING: AtomicBool = AtomicBool::new(false);
 #[cfg(windows)]
 static CLICKED: AtomicBool = AtomicBool::new(false);
 
-#[cfg(windows)]
-static HOOK_HANDLE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-#[cfg(windows)]
-static HOOK_REFCOUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 /// Whether `msg` is a mouse button going down.
 ///
 /// Client and non-client downs both count: a click on a title bar, border or
@@ -76,10 +71,16 @@ unsafe extern "system" fn hook_proc(
     unsafe { CallNextHookEx(None, n_code, w_param, l_param) }
 }
 
-/// RAII hook handle. Drop uninstalls the hook when last guard drops.
+/// RAII hook handle: owns the installed hook and removes it on drop.
+///
+/// The handle is owned rather than shared behind a static refcount, so
+/// "installed" and "guarded" cannot disagree: dropping the guard uninstalls
+/// exactly the hook that guard installed. `App` keeps a single
+/// `Option<WheelHook>` and that option is what prevents a second install.
 // The `PhantomData<*const ()>` makes it `!Send` — HHOOK is thread-affine.
 pub struct WheelHook {
-    _private: (),
+    /// `0` means no hook (the non-Windows stub, and nothing else).
+    handle: isize,
     _marker: std::marker::PhantomData<*const ()>,
 }
 
@@ -91,59 +92,20 @@ impl WheelHook {
     pub fn install() -> Option<Self> {
         #[cfg(windows)]
         {
-            // Fast path: already installed.
-            if HOOK_HANDLE.load(Ordering::Acquire) != 0 {
-                HOOK_REFCOUNT.fetch_add(1, Ordering::AcqRel);
-                // Double-check handle still valid after increment.
-                if HOOK_HANDLE.load(Ordering::Acquire) == 0 {
-                    HOOK_REFCOUNT.fetch_sub(1, Ordering::AcqRel);
-                } else {
-                    return Some(Self {
-                        _private: (),
-                        _marker: std::marker::PhantomData,
-                    });
-                }
-            }
             // SAFETY: WH_MOUSE_LL is process-global, hook_proc has correct signature.
             let hook = unsafe {
                 use windows::Win32::UI::WindowsAndMessaging::{SetWindowsHookExW, WH_MOUSE_LL};
-                SetWindowsHookExW(WH_MOUSE_LL, Some(hook_proc), None, 0).ok()
+                SetWindowsHookExW(WH_MOUSE_LL, Some(hook_proc), None, 0)
             };
-            if let Some(hook) = hook {
-                let raw = hook.0 as usize;
-                // Ownership: only the installer that swaps the handle in from 0
-                // owns it, and only the owner unhooks it — on the last drop.
-                match HOOK_HANDLE.compare_exchange(0, raw, Ordering::AcqRel, Ordering::Acquire) {
-                    Ok(_) => {
-                        HOOK_REFCOUNT.store(1, Ordering::Release);
-                        return Some(Self {
-                            _private: (),
-                            _marker: std::marker::PhantomData,
-                        });
-                    }
-                    Err(existing) => {
-                        // Another thread won the install: keep its hook, drop ours.
-                        // SAFETY: we installed but lost race; unhook ours.
-                        unsafe {
-                            let _ =
-                                windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(hook);
-                        }
-                        if existing != 0 {
-                            HOOK_REFCOUNT.fetch_add(1, Ordering::AcqRel);
-                            return Some(Self {
-                                _private: (),
-                                _marker: std::marker::PhantomData,
-                            });
-                        }
-                    }
-                }
-            }
-            None
+            hook.ok().filter(|h| !h.0.is_null()).map(|h| Self {
+                handle: h.0 as isize,
+                _marker: std::marker::PhantomData,
+            })
         }
         #[cfg(not(windows))]
         {
             Some(Self {
-                _private: (),
+                handle: 0,
                 _marker: std::marker::PhantomData,
             })
         }
@@ -152,22 +114,18 @@ impl WheelHook {
 
 impl Drop for WheelHook {
     fn drop(&mut self) {
+        if self.handle == 0 {
+            return;
+        }
         #[cfg(windows)]
         {
-            let prev = HOOK_REFCOUNT.fetch_sub(1, Ordering::AcqRel);
-            if prev == 1 {
-                let raw = HOOK_HANDLE.swap(0, Ordering::AcqRel);
-                if raw != 0 {
-                    // SAFETY: raw came from SetWindowsHookExW; balances exactly once.
-                    unsafe {
-                        let hook = windows::Win32::UI::WindowsAndMessaging::HHOOK(
-                            raw as *mut std::ffi::c_void,
-                        );
-                        let _ = windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(hook);
-                    }
-                }
-            } else if prev == 0 {
-                HOOK_REFCOUNT.store(0, Ordering::Release);
+            // SAFETY: `handle` came from SetWindowsHookExW on this thread and
+            // is unhooked exactly once, here.
+            unsafe {
+                let hook = windows::Win32::UI::WindowsAndMessaging::HHOOK(
+                    self.handle as *mut std::ffi::c_void,
+                );
+                let _ = windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(hook);
             }
         }
     }
