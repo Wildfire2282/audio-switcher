@@ -1,11 +1,12 @@
 # The whole path to a release, unattended.
 #
 # Two jobs, and the second cannot start unless the first passed:
-#   gate    - build, test, fmt, clippy, manifest, plus the packager (size
-#             budget, import list), so a release can never ship oversized or
-#             gain a runtime dependency unnoticed
-#   release - packages and publishes with the same `scripts/package.ps1` the
-#             gate just validated
+#   gate    - fmt, manifest, test, clippy, plus the packager (size budget,
+#             import list), so a release can never ship oversized or gain a
+#             runtime dependency unnoticed
+#   release - publishes the artifact the gate produced. It does not build: the
+#             bytes published are the bytes the size budget and the import
+#             scan ran on, so a release cannot differ from what passed.
 #
 # `release` runs on a `v*` tag push, or manually through workflow_dispatch (which
 # is how this job gets verified before anyone trusts a tag with it).
@@ -34,19 +35,28 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Cache cargo registry and build output
+      # Two caches, because the registry only changes when the lockfile does,
+      # while target/ changes on every commit: one key each, and target/ falls
+      # back to the newest entry for another lockfile. Sharing one key made any
+      # lockfile change a cold build of everything.
+      - name: Cache cargo registry
         uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+      - name: Cache build output
+        uses: actions/cache@v6
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-target-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-target-
 
       - name: Ensure rustfmt and clippy are installed
         run: rustup component add rustfmt clippy
 
-      - name: Gate (build, test, fmt, clippy, manifest)
+      - name: Gate (fmt, manifest, test, clippy)
         shell: pwsh
         run: ./scripts/smoke.ps1 -GateOnly
 
@@ -56,6 +66,12 @@ jobs:
       - name: Package (size budget, import list, manifest)
         shell: pwsh
         run: ./scripts/package.ps1
+
+      - name: Upload the packaged release
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
 
   release:
     needs: gate
@@ -74,9 +90,12 @@ jobs:
           "tag=$tag" >> $env:GITHUB_OUTPUT
           Write-Host "releasing $tag"
 
-      - name: Package (the script the gate just ran)
-        shell: pwsh
-        run: ./scripts/package.ps1
+      # The gate's own artifact: no second build, so no second set of bytes.
+      - name: Download the verified release
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
 
       - name: Publish
         shell: pwsh
@@ -87,5 +106,5 @@ jobs:
           $notes = ".github/release-notes/$tag.md"
           if (-not (Test-Path $notes)) { throw "missing release notes: $notes" }
           $asset = Get-ChildItem dist -Filter 'audio-switcher-*.exe' | Select-Object -First 1
-          if (-not $asset) { throw 'the packager produced no artifact' }
+          if (-not $asset) { throw 'the gate produced no artifact' }
           gh release create $tag $asset.FullName --title $tag --notes-file $notes --verify-tag
