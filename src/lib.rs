@@ -72,10 +72,15 @@
 //! The gate is `scripts/smoke.ps1`.
 #![warn(missing_docs)]
 #![warn(unsafe_op_in_unsafe_fn)]
-// Baseline-inherent duplicates (single-instance 0.3.3 pulls thiserror 1/syn 1;
-// tray-icon's tree pulls old unix-gated nix/memoffset/bitflags/miniz_oxide):
-// locked; upgrades need a separate decision. Re-check on every baseline
-// bump with `cargo tree -i <crate>`; new direct-dep duplicates stay denied.
+// Baseline-inherent duplicates. In the graph this crate builds, `single-instance`
+// 0.3.3 is still on thiserror 1 while this crate, muda and tray-icon are on
+// thiserror 2 — so thiserror-impl 1 and its syn 2 sit beside serde_derive's
+// syn 3. The rest clippy reports (the GTK/glib stack under tray-icon and nix
+// under single-instance: bitflags, memoffset, miniz_oxide, proc-macro-crate,
+// syn 1, toml_edit) is resolved for other targets and never compiled here.
+// Locked: removing one is a dependency decision, not a code change. Re-check
+// with `cargo tree -d` on every baseline bump; a new duplicate in the graph we
+// build is a review failure, not a line to add here.
 #![allow(clippy::multiple_crate_versions)]
 // `pub` below is the minimum the `main` binary and doctests need; everything
 // else defaults to `pub(crate)` (no `prelude` module: only two import sites
