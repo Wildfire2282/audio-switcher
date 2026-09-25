@@ -34,7 +34,7 @@ Run `audio-switcher-v<version>-x64.exe` from the [releases page](https://github.
 
 ### Hotkeys
 
-Hotkeys are unbound by default. **Open Hotkey Settings** opens the config folder; the `hotkeys` object in `config.json` takes one combination per action, and the file header documents the format bilingually. Changes apply after a restart.
+Hotkeys are unbound by default. **Open Hotkey Settings** opens the config folder; the `hotkeys` object in `config.json` takes one combination per action, and the file header documents the format bilingually. Changes apply after a restart. Holding a combination down does not repeat the action.
 
 | Action | Config key | Step |
 | --- | --- | --- |
@@ -105,7 +105,7 @@ Log files older than 14 days are removed when the tool starts.
 
 ### 全局快捷键
 
-默认无绑定。**打开快捷键设置**打开配置文件夹；`config.json` 的 `hotkeys` 对象为每个动作填一个组合字符串，文件头以中英双语说明格式。改动在重启后生效。
+默认无绑定。**打开快捷键设置**打开配置文件夹；`config.json` 的 `hotkeys` 对象为每个动作填一个组合字符串，文件头以中英双语说明格式。改动在重启后生效。按住组合键不会重复触发该动作。
 
 | 动作 | 配置键 | 步长 |
 | --- | --- | --- |
