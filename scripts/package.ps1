@@ -81,9 +81,11 @@ try {
     New-Item -ItemType Directory -Force -Path $dist | Out-Null
     $name = "audio-switcher-v$version-x64.exe"
     $checksum = "$name.sha256"
-    Get-ChildItem -Path $dist -File |
+    # `-Force`: a hidden leftover or a stray directory is exactly the kind of
+    # entry that would otherwise outlive the release it belonged to.
+    Get-ChildItem -Path $dist -Force |
         Where-Object { $_.Name -notin @($name, $checksum) } |
-        ForEach-Object { Write-Host "      pruning $($_.Name)"; Remove-Item $_.FullName -Force }
+        ForEach-Object { Write-Host "      pruning $($_.Name)"; Remove-Item $_.FullName -Force -Recurse }
 
     $out = Join-Path $dist $name
     Copy-Item $exe $out -Force

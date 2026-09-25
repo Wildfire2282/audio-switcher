@@ -33,7 +33,12 @@ jobs:
   gate:
     runs-on: windows-latest
     steps:
+      # The ref, not the branch the run was dispatched from: a manual release
+      # must build the tag's commit, or the bytes published under a tag could
+      # come from a later master.
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       # Two caches, because the registry only changes when the lockfile does,
       # while target/ changes on every commit: one key each, and target/ falls
@@ -80,7 +85,10 @@ jobs:
     permissions:
       contents: write # creating a release; without this `gh` gets a 403
     steps:
+      # The tagged commit, so the release notes come from the release itself.
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Resolve the tag
         id: tag
@@ -107,4 +115,8 @@ jobs:
           if (-not (Test-Path $notes)) { throw "missing release notes: $notes" }
           $asset = Get-ChildItem dist -Filter 'audio-switcher-*.exe' | Select-Object -First 1
           if (-not $asset) { throw 'the gate produced no artifact' }
-          gh release create $tag $asset.FullName --title $tag --notes-file $notes --verify-tag
+          # The sidecar ships with the image: it is what a download is verified
+          # against, and `package.ps1` already stages it next to the exe.
+          $sum = Get-ChildItem dist -Filter 'audio-switcher-*.exe.sha256' | Select-Object -First 1
+          if (-not $sum) { throw 'the gate produced no checksum sidecar' }
+          gh release create $tag $asset.FullName $sum.FullName --title $tag --notes-file $notes --verify-tag

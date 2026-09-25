@@ -70,11 +70,14 @@ fn ui_and_app_never_touch_win32() {
 /// back, because a tooltip is the obvious thing to add.
 #[test]
 fn tray_carries_no_tooltip() {
-    let src = stripped_source("ui/tray.rs");
+    // The whole crate, not just `ui/tray.rs`: `TrayWrapper::tray` is a public
+    // field of a public type, so any layer can reach `set_tooltip` without a
+    // banned word ever appearing in the wrapper that owns the icon.
+    let src = stripped_source(".");
     for banned in ["with_tooltip", "update_tooltip", "set_tooltip", "NIF_TIP"] {
         assert!(
             !src.contains(banned),
-            "`ui/tray.rs` uses `{banned}`: the overlay is the only read-out, \
+            "`src` uses `{banned}`: the overlay is the only read-out, \
              and a tooltip would cover it"
         );
     }
@@ -168,20 +171,74 @@ fn unit_tests_live_beside_the_module_not_inside_it() {
 /// before any work starts — the one document whose cost is not opt-in. Keep it a
 /// budget: raise the number deliberately or trim the text, never let it creep.
 #[test]
-fn agent_doc_stays_within_its_token_budget() {
+fn agent_doc_stays_within_its_budget() {
     const BUDGET: usize = 6_500;
 
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("AGENTS.md");
-    let Ok(text) = fs::read_to_string(&path) else {
-        // Local-only file: a fresh clone has none, and that is not a failure.
-        return;
-    };
+    // Tracked, so a clone always has it: an absent file is a broken checkout or
+    // a deleted rule book, and passing here would disable the budget with it.
+    let text = fs::read_to_string(&path).expect("AGENTS.md is tracked and readable");
     assert!(
         text.len() <= BUDGET,
         "AGENTS.md is {} bytes (budget {BUDGET}): every session pays this before \
          reading anything, so trim a rule or move it into the crate docs",
         text.len()
     );
+}
+
+/// Whether `line` is the attribute that gates the item after it on tests.
+fn is_test_gate(line: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with("#[cfg(test)]") || line.starts_with("#[cfg(all(test")
+}
+
+/// Lines a production read has to get through: everything except the items
+/// gated on `#[cfg(test)]`.
+///
+/// Each gated item has to be skipped on its own, because a gated item is not
+/// only the trailing test module: `config` and `audio` each keep a test-only
+/// helper or re-export between production items (`config.rs:453`,
+/// `audio/mod.rs:145`). Stopping at the first attribute — what this used to do —
+/// hid every production line below it, so those two files reported roughly
+/// two-thirds of their real length.
+fn production_lines(text: &str) -> usize {
+    let mut count = 0;
+    let mut depth = 0i32;
+    // `Some(depth)` while inside a skipped item: the depth it opened at.
+    let mut skipping: Option<i32> = None;
+    // Set by a `#[cfg(test)]` attribute, cleared by the item it gates.
+    let mut gated = false;
+    for line in text.lines() {
+        let before = depth;
+        depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
+        if let Some(open) = skipping {
+            // A skipped item ends where its braces close; `open` is the depth it
+            // opened at, so the closing brace is the first line below it.
+            if depth < open {
+                skipping = None;
+                gated = false;
+            }
+            continue;
+        }
+        if gated {
+            if line.contains('{') {
+                // A block item runs to its closing brace — unless it opened and
+                // closed on this same line.
+                skipping = (depth > before).then_some(depth);
+                gated = skipping.is_some();
+            } else if line.trim_end().ends_with(';') {
+                // A declaration item (`mod tests;`, `pub use mock::MockBackend;`).
+                gated = false;
+            }
+            continue;
+        }
+        if is_test_gate(line) {
+            gated = true;
+            continue;
+        }
+        count += 1;
+    }
+    count
 }
 
 /// A file an agent cannot read in one pass is a file it will mis-edit. The limit
@@ -197,13 +254,7 @@ fn no_source_file_outgrows_one_reading_pass() {
 
     for path in files {
         let text = fs::read_to_string(&path).expect("readable source");
-        let production = text
-            .lines()
-            .take_while(|line| {
-                !line.trim_start().starts_with("#[cfg(test)]")
-                    && !line.trim_start().starts_with("#[cfg(all(test")
-            })
-            .count();
+        let production = production_lines(&text);
         assert!(
             production <= LIMIT,
             "{} is {production} production lines (limit {LIMIT}): split it along \
@@ -211,6 +262,32 @@ fn no_source_file_outgrows_one_reading_pass() {
             path.display()
         );
     }
+}
+
+/// The counting rule above decides whether the size ceiling is enforced at all,
+/// so its own shapes are pinned: a declaration item, an inline module, a gated
+/// helper between two production items, and a brace inside a gated body that
+/// must not end the skip early.
+#[test]
+fn production_lines_skips_every_gated_item() {
+    let source = "\
+fn before() {}
+#[cfg(test)]
+mod tests;
+#[cfg(test)]
+pub use mock::MockBackend;
+#[cfg(test)]
+fn helper() {
+    let json = \"{}\";
+    assert_eq!(json, \"{}\");
+}
+fn after() {}
+#[cfg(test)]
+mod inline {
+    fn inner() {}
+}
+";
+    assert_eq!(production_lines(source), 2, "lines: {source}");
 }
 
 /// Release notes are the last rule that lived only in prose: they must be
@@ -221,9 +298,9 @@ fn release_notes_are_bilingual_and_user_visible() {
     const MIRROR: &[(&str, &str)] = &[("新增", "Added"), ("修复", "Fixed"), ("变更", "Changed")];
 
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/release-notes");
-    let Ok(entries) = fs::read_dir(&dir) else {
-        return;
-    };
+    // Tracked with the notes it holds: a missing directory must not quietly
+    // switch the bilingual-mirror rule off.
+    let entries = fs::read_dir(&dir).expect("the release-notes directory is tracked");
 
     for entry in entries.flatten() {
         let path = entry.path();
