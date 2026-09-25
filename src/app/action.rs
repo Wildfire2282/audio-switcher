@@ -168,7 +168,10 @@ impl<B: AudioBackend> App<B> {
             }
             MenuAction::About => {
                 if let Ok(url) = crate::ABOUT_URL.parse::<crate::platform::shell::Url>() {
-                    crate::platform::shell::open_url(&url);
+                    crate::platform::shell::open_url(
+                        &url,
+                        &crate::ui::i18n::tr("link_error", self.lang()),
+                    );
                 }
             }
             MenuAction::Exit => {
@@ -230,7 +233,10 @@ impl<B: AudioBackend> App<B> {
             }
             Err(e) => {
                 tracing::warn!("set_autostart_mode failed: {e}");
-                crate::platform::dialog::show_autostart_error(&e);
+                crate::platform::dialog::show_msgbox(&format!(
+                    "{}: {e}",
+                    crate::ui::i18n::tr("autostart_error", self.lang())
+                ));
             }
         }
     }

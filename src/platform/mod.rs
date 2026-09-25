@@ -22,7 +22,7 @@ pub mod theme;
 pub mod utf16;
 
 pub use autostart::{
-    AutostartMode, AutostartState, autostart_state, refresh_admin_task_cache, set_autostart_mode,
+    AutostartMode, autostart_state, refresh_admin_task_cache, run_entry_absent, set_autostart_mode,
 };
 pub use com::ComGuard;
 pub use single_instance::SingleInstanceGuard;

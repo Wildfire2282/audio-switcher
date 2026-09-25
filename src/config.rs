@@ -282,8 +282,8 @@ pub fn config_comment_header(path: &Path) -> String {
     //     \"prev_device\"  Previous output device / 上一个输出设备\n\
     //   Example / 示例:\n\
     //     \"hotkeys\": {{ \"mute\": \"Ctrl+Alt+M\", \"volume_up\": \"Ctrl+Alt+Up\", \"volume_down\": \"Ctrl+Alt+Down\", \"next_device\": null, \"prev_device\": null }}\n\
-    //   A combination owned by another program is disabled with a dialog; the rest keep working.\n\
-    //   被其他程序占用的组合会弹窗并自动禁用，其余照常工作。\n",
+    //   A combination another program owns is reported and left unbound for the session; the setting stays here.\n\
+    //   被其他程序占用的组合会弹窗并本次运行不生效；该设置仍留在此文件中。\n",
         path.display()
     )
 }

@@ -186,6 +186,36 @@ pub fn tr(key: &str, lang: Lang) -> String {
                 "Failed to open sound settings".into()
             }
         }
+        "autostart_error" => {
+            if zh {
+                "更改自启设置失败".into()
+            } else {
+                "Failed to change the autostart setting".into()
+            }
+        }
+        "link_error" => {
+            if zh {
+                "无法打开链接".into()
+            } else {
+                "Failed to open the link".into()
+            }
+        }
+        "hotkey_conflict" => {
+            if zh {
+                "以下快捷键已被其他程序占用，本次运行未生效".into()
+            } else {
+                "These hotkeys are already in use by another program, so they are \
+                 not active this session"
+                    .into()
+            }
+        }
+        "hotkey_conflict_hint" => {
+            if zh {
+                "关闭占用的程序，或编辑此文件更换组合：".into()
+            } else {
+                "Close that program, or edit this file to pick another combination:".into()
+            }
+        }
         _ => key.to_string(),
     }
 }

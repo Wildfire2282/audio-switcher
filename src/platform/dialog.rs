@@ -3,9 +3,8 @@
 //! Centering uses a transient `FindWindowW` + `SetWindowPos` pass from a
 //! short-lived worker thread: no hook is ever installed just to center a
 //! dialog. Contract: `shell`, `autostart` and `app` may call `show_msgbox`
-//! and `show_autostart_error`; dialog owns no other platform state.
+//! with text they own; dialog composes none of it.
 
-use super::autostart::AutostartError;
 #[cfg(windows)]
 use super::utf16::wide_z;
 
@@ -69,15 +68,6 @@ pub fn show_critical(msg: &str) {
     }
 }
 
-/// Show the autostart failure with its cause. Takes the typed error so the
-/// detail (exit code plus whatever `schtasks` said) reaches the user instead of
-/// a bare string.
-pub(crate) fn show_autostart_error(err: &AutostartError) {
-    show_msgbox(&format!(
-        "Failed to change the autostart setting.\n\nDetails: {err}"
-    ));
-}
-
 /// Move the first window `matches` accepts to its monitor's work-area centre.
 ///
 /// One shot on a short-lived worker thread: polls for up to `wait`, centres once
@@ -112,8 +102,9 @@ fn first_window_matching(matches: &impl Fn(isize) -> bool) -> Option<isize> {
 
     /// # Safety
     ///
-    /// `l_param` must be a live pointer to a `Ctx`, which is what the caller
-    /// below passes; the callback only reads through it.
+    /// `l_param` must be a live pointer to a `Ctx` for the whole call, which is
+    /// what the caller below passes: `Ctx` outlives `EnumWindows`, so the
+    /// callback may read it and record the match in it.
     unsafe extern "system" fn enum_proc(
         hwnd: windows::Win32::Foundation::HWND,
         l_param: LPARAM,
@@ -131,8 +122,8 @@ fn first_window_matching(matches: &impl Fn(isize) -> bool) -> Option<isize> {
         matches,
         found: None,
     };
-    // SAFETY: `ctx` outlives the call and the callback only writes into it;
-    // `EnumWindows` is always safe.
+    // SAFETY: `ctx` is a live local for the whole call, and the callback's
+    // contract (above) is satisfied for it; `EnumWindows` is otherwise safe.
     unsafe {
         let _ = EnumWindows(
             Some(enum_proc),

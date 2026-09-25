@@ -172,8 +172,9 @@ fn run_value_round_trip() {
     let _ = set_run_value(false);
 
     set_run_value(true).expect("enable");
-    assert!(
-        run_value_enabled().expect("read back after enable"),
+    assert_eq!(
+        run_value_state().expect("read back after enable"),
+        RunEntry::Enabled,
         "the Run value must read as installed and enabled"
     );
     let exe = get_exe_path().expect("exe path");
@@ -194,15 +195,42 @@ fn run_value_round_trip() {
     );
 
     set_run_value(false).expect("disable");
-    assert!(
-        !run_value_enabled().expect("read back after disable"),
-        "the Run value must be gone"
+    assert_eq!(
+        run_value_state().expect("read back after disable"),
+        RunEntry::Absent,
+        "the Run value must be gone, not merely switched off"
     );
     assert_eq!(
         read_registry_value(RUN_KEY, autostart_key_name()),
         None,
         "the Run value must be removed, not blanked"
     );
+}
+
+#[test]
+fn startup_approved_state_follows_the_state_byte() {
+    // The enabled forms the shell writes: never touched (0x06) and enabled by
+    // the user (0x02).
+    assert!(startup_approved_state(&[
+        0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    ]));
+    assert!(startup_approved_state(&[
+        0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    ]));
+    // Disabled: the same value with an odd state byte.
+    assert!(!startup_approved_state(&[
+        0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    ]));
+    assert!(!startup_approved_state(&[
+        0x07, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    ]));
+    // Switched off and on again: the state byte says enabled, and the timestamp
+    // the shell stamps next to it must not be read as "disabled".
+    assert!(startup_approved_state(&[
+        0x02, 0, 0, 0, 0x40, 0x9A, 0x2C, 0x3D, 0x8B, 0x0E, 0xDB, 0x01,
+    ]));
+    // Nothing to remember reads as enabled.
+    assert!(startup_approved_state(&[]));
 }
 
 #[test]

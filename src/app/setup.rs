@@ -5,40 +5,45 @@
 //! they are plain functions instead of methods.
 
 use crate::config::AppConfig;
+use crate::platform::AutostartMode;
 use crate::platform::hotkey::{self, Hotkey, HotkeyAction, HotkeyError};
-use crate::platform::{AutostartMode, AutostartState, autostart_state};
 
-/// Self-heal the current-user `Run` value when the user asked for it but the
-/// read-back says no entry exists. Recreating the elevated task would need a
-/// UAC prompt, and raising one on every logon is worse than the missing entry:
-/// the menu shows it as not set and the user re-enables it deliberately.
+/// Self-heal the current-user `Run` value when the user asked for it but no
+/// entry is there at all. Recreating the elevated task would need a UAC prompt,
+/// and raising one on every logon is worse than the missing entry: the menu
+/// shows it as not set and the user re-enables it deliberately.
 ///
-/// A read failure (`Unknown`) never writes.
+/// A read failure never writes, and neither does an entry the shell reports as
+/// switched off: that one is not missing, and rewriting it would undo a choice
+/// the user made in Task Manager's Startup tab. The write is synchronous — a
+/// `schtasks` presence check plus one registry value, only on the pass that
+/// finds the entry missing — because the caller builds the menu from that same
+/// read-back immediately afterwards: from a worker thread the menu would show
+/// "Off" until some unrelated refresh happened to correct it.
 pub(super) fn ensure_autostart(cfg: &AppConfig) {
-    // Synchronous on purpose: the caller builds the menu from this cache right
-    // after, so a worker thread here races that read and shows "Off" for an
-    // installed elevated task until some unrelated refresh corrected it.
     crate::platform::refresh_admin_task_cache();
     match cfg.autostart_mode {
         AutostartMode::Off | AutostartMode::Admin => {}
         AutostartMode::User => {
-            if autostart_state() == AutostartState::Off {
-                std::thread::spawn(|| {
-                    if let Err(e) = crate::platform::set_autostart_mode(AutostartMode::User) {
-                        crate::platform::dialog::show_autostart_error(&e);
-                    }
-                });
+            if crate::platform::run_entry_absent() {
+                if let Err(e) = crate::platform::set_autostart_mode(AutostartMode::User) {
+                    crate::platform::dialog::show_msgbox(&format!(
+                        "{}: {e}",
+                        crate::ui::i18n::tr("autostart_error", cfg.effective_lang())
+                    ));
+                }
             }
         }
     }
 }
 
-/// Bind the configured hotkeys, reporting (and disabling) occupied combos.
+/// Bind the configured hotkeys, reporting the combos another program owns.
 ///
-/// An occupied combination is never silently dropped: the affected actions are
-/// cleared in `cfg` — so the menu reflects what is actually bound — persisted,
-/// and surfaced in one dialog listing every conflict.
-pub(super) fn apply_hotkeys(cfg: &mut AppConfig) {
+/// A conflict only skips registration for this session: the combos stay in the
+/// config, so they work again once the other program exits. Erasing them instead
+/// would let any program that happens to be running at launch delete the user's
+/// setting permanently.
+pub(super) fn apply_hotkeys(cfg: &AppConfig) {
     let mut bindings: Vec<(HotkeyAction, Hotkey)> = Vec::new();
     for action in HotkeyAction::ALL {
         let Some(raw) = cfg.hotkeys.get(action) else {
@@ -54,16 +59,13 @@ pub(super) fn apply_hotkeys(cfg: &mut AppConfig) {
     let Err(HotkeyError(occupied)) = hotkey::register_all(&bindings) else {
         return;
     };
-    for (action, _) in &occupied {
-        cfg.hotkeys.set(*action, None);
-    }
-    if let Err(e) = cfg.save_to(&AppConfig::config_path()) {
-        tracing::warn!("config save failed after hotkey conflict: {e}");
-    }
+    let lang = cfg.effective_lang();
     crate::platform::dialog::show_msgbox(&format!(
-        "{}: some hotkeys are already in use by another program and were disabled:\n\n{}\n\nEdit {} to pick another combination.",
+        "{}: {}\n\n{}\n\n{} {}",
         crate::TOOL_DISPLAY_NAME,
+        crate::ui::i18n::tr("hotkey_conflict", lang),
         hotkey::summarize(&occupied),
+        crate::ui::i18n::tr("hotkey_conflict_hint", lang),
         AppConfig::config_path().display(),
     ));
 }

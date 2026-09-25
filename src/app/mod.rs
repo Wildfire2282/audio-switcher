@@ -107,13 +107,13 @@ impl<B: AudioBackend> App<B> {
     /// bound keeps a broken install from hanging startup — the surviving
     /// error propagates for a visible dialog + exit, never a panic.
     fn assemble(
-        mut cfg: AppConfig,
+        cfg: AppConfig,
         mut backend: B,
         com: crate::platform::ComGuard,
     ) -> Result<Self, TrayError> {
         ensure_autostart(&cfg);
         // Register before the first menu build so its checks match reality.
-        apply_hotkeys(&mut cfg);
+        apply_hotkeys(&cfg);
         let ui_lang = cfg.effective_lang();
         // `None` is "unreadable": the menu grays the group instead of guessing.
         let autostart = autostart_state().mode();

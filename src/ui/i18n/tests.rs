@@ -58,6 +58,10 @@ const PRODUCTION_KEYS: &[&str] = &[
     "input_error",
     "mixer_error",
     "sound_error",
+    "autostart_error",
+    "link_error",
+    "hotkey_conflict",
+    "hotkey_conflict_hint",
 ];
 
 /// An unknown key is returned verbatim, so an arm missing from one language
@@ -79,7 +83,7 @@ fn every_production_key_is_translated_in_both_languages() {
     }
     assert_eq!(
         PRODUCTION_KEYS.len(),
-        27,
+        31,
         "the key list must match the arms of `tr`"
     );
 }

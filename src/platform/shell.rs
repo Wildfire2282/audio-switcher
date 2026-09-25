@@ -159,25 +159,28 @@ fn wide_nul(s: &str) -> Result<Vec<u16>, ShellError> {
 }
 
 /// Open a validated external URL. Failures surface a dialog (never swallowed).
-pub(crate) fn open_url(url: &Url) {
+///
+/// `err_msg` is the caller's, like the other openers here: the wording follows
+/// the UI language, which this layer does not own.
+pub(crate) fn open_url(url: &Url, err_msg: &str) {
     #[cfg(windows)]
     {
         let target = match wide_nul(url.as_str()) {
             Ok(w) => w,
             Err(e) => {
                 tracing::warn!("open_url validation failed: {e}");
-                crate::platform::dialog::show_msgbox("Failed to open the link (invalid address).");
+                crate::platform::dialog::show_msgbox(err_msg);
                 return;
             }
         };
         if let Err(e) = shell_execute(&target, None) {
             tracing::warn!("open_url failed: {e}");
-            crate::platform::dialog::show_msgbox("Failed to open the link in the browser.");
+            crate::platform::dialog::show_msgbox(err_msg);
         }
     }
     #[cfg(not(windows))]
     {
-        let _ = url;
+        let _ = (url, err_msg);
     }
 }
 

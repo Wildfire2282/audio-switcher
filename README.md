@@ -55,7 +55,7 @@ Each key takes a combination string; `null` disables the action:
 }
 ```
 
-A combination another program owns is reported in a dialog and left unbound; the remaining hotkeys register normally.
+A combination another program owns is reported in a dialog and left unbound for the session; the setting stays in `config.json`, so it binds again once the other program exits, and the remaining hotkeys register normally.
 
 ### System and settings
 
@@ -126,7 +126,7 @@ Log files older than 14 days are removed when the tool starts.
 }
 ```
 
-被其他程序占用的组合会弹窗报告并保持未绑定；其余快捷键照常注册。
+被其他程序占用的组合会弹窗报告，本次运行保持未绑定；该设置会留在 `config.json` 里，占用程序退出后即恢复生效，其余快捷键照常注册。
 
 ### 系统与设置
 
