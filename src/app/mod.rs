@@ -24,6 +24,14 @@ const TRAY_BOOT_RETRY_WAIT: Duration = Duration::from_millis(250);
 /// stable (another process holds the slot, or policy blocks it), so retrying
 /// every frame only means the warning drowns in its own repeats.
 const HOOK_RETRY_WAIT: Duration = Duration::from_secs(2);
+/// A frame that took this long blocked this thread, which is how the wheel hook
+/// gets silently dropped: Windows removes a low-level hook whose callback the
+/// installing thread stops servicing (`LowLevelHooksTimeout`), and an unhooked
+/// mouse means no hover volume for the rest of the session. A UAC helper or a
+/// cold `schtasks` spawn is enough to lose it, so the hook is re-armed whenever
+/// a frame ran this long — an unhook/re-hook pair per slow frame, nothing in a
+/// normal one.
+const HOOK_STALL_REARM: Duration = Duration::from_millis(500);
 /// Volume percent per global-hotkey press (EarTrumpet parity: its
 /// absolute-volume shortcuts step 2).
 const HOTKEY_VOLUME_STEP: i32 = 2;
@@ -174,7 +182,12 @@ impl<B: AudioBackend> App<B> {
         // the idle timeout.
         pump::init_wake_channel();
         loop {
-            pump::pump_messages();
+            let frame_start = Instant::now();
+            // `WM_QUIT` is the message loop's own exit signal: honoring it here
+            // keeps a quit posted by anything else from being swallowed.
+            if !pump::pump_messages() {
+                break;
+            }
             if self.should_exit {
                 break;
             }
@@ -190,6 +203,9 @@ impl<B: AudioBackend> App<B> {
             self.poll_devices();
             self.poll_volume_state();
             self.poll_osd();
+            if frame_start.elapsed() >= HOOK_STALL_REARM {
+                self.rearm_hook();
+            }
             let timeout = self.wait_timeout();
             pump::wait_for_input(timeout);
         }

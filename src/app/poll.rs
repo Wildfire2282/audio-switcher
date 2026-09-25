@@ -32,6 +32,19 @@ impl<B: AudioBackend> App<B> {
             None => self.hook_install_at = Instant::now() + HOOK_RETRY_WAIT,
         }
     }
+    /// Drop the wheel hook so the next frame installs a fresh one.
+    ///
+    /// `App` cannot tell a live hook from one Windows dropped, and it never
+    /// says: the only signal is that the frame that blocked this thread ran
+    /// long. The install deadline is cleared rather than set to a retry pause —
+    /// the settle delay at startup is for Explorer, not for a re-arm.
+    pub(super) fn rearm_hook(&mut self) {
+        if self.hook.take().is_none() {
+            return;
+        }
+        tracing::debug!("wheel hook re-armed: the previous frame blocked this thread");
+        self.hook_install_at = Instant::now();
+    }
     /// Reset wheel acceleration so a stale burst cannot jump the volume
     /// (fresh hover, menu takeover, or cursor leave).
     pub(super) fn reset_wheel(&mut self) {

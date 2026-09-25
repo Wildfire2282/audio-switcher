@@ -13,6 +13,13 @@ pub const PUMP_IDLE_MS: u32 = 15_000;
 #[cfg(windows)]
 const WAKE_MESSAGE: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 1;
 
+/// Pause after a failed message wait.
+///
+/// A failed wait returns at once, so without this the loop would spin a core at
+/// 100% while everything still appeared to work.
+#[cfg(windows)]
+const WAIT_FAILURE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(50);
+
 #[cfg(windows)]
 mod wake {
     use std::sync::Once;
@@ -145,11 +152,15 @@ pub(crate) fn wake() {
 pub(crate) fn wake() {}
 
 /// Drain pending Win32 messages without blocking.
-pub(crate) fn pump_messages() {
+///
+/// `false` once `WM_QUIT` was drained, which means the loop must end: `WM_QUIT`
+/// is a thread message, so `DispatchMessageW` drops it, and a loop that ignored
+/// it would run on with nothing left to wait for.
+pub(crate) fn pump_messages() -> bool {
     #[cfg(windows)]
     {
         use windows::Win32::UI::WindowsAndMessaging::{
-            DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage, WM_HOTKEY,
+            DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage, WM_HOTKEY, WM_QUIT,
         };
         loop {
             let mut msg = MSG::default();
@@ -158,6 +169,9 @@ pub(crate) fn pump_messages() {
             let pending = unsafe { PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE).as_bool() };
             if !pending {
                 break;
+            }
+            if msg.message == WM_QUIT {
+                return false;
             }
             if msg.message == WM_HOTKEY {
                 // `RegisterHotKey(None, ..)` binds to this thread and posts
@@ -175,6 +189,11 @@ pub(crate) fn pump_messages() {
             // SAFETY: same freshly-drained `msg`; standard dispatch pair.
             unsafe { DispatchMessageW(&raw const msg) };
         }
+        true
+    }
+    #[cfg(not(windows))]
+    {
+        true
     }
 }
 
@@ -200,10 +219,11 @@ pub(crate) fn wait_for_input(timeout_ms: u32) {
             MsgWaitForMultipleObjectsEx(Some(&[]), timeout_ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE)
         };
         if waited == WAIT_FAILED {
-            // A failed wait returns at once, so the loop spins a core at 100%
-            // while everything still appears to work — the one failure here
-            // that must leave a trace.
+            // The failure must leave a trace, and the loop must not spin: a
+            // failed wait returns at once, which would otherwise peg a core
+            // while everything still looked healthy.
             tracing::warn!("pump: MsgWaitForMultipleObjectsEx failed; message wait skipped");
+            std::thread::sleep(WAIT_FAILURE_BACKOFF);
         }
     }
     #[cfg(not(windows))]
