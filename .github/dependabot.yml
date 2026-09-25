@@ -15,6 +15,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # glib is a transitive Linux dependency of gtk/muda; this tool is Windows-only
+    # and gtk 0.18 pins glib, so automated updates fail.
+    ignore:
+      - dependency-name: "glib"
 
   - package-ecosystem: github-actions
     directory: /
