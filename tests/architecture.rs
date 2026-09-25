@@ -49,8 +49,9 @@ fn stripped_source(relative: &str) -> String {
         .join("\n")
 }
 
-/// Layering (see the crate docs): Win32 lives in `platform` only. `ui` and `app`
-/// stay portable, and that is what keeps `cargo test` runnable everywhere.
+/// Layering (see the crate docs): Win32 lives in `platform` and `audio::wasapi`
+/// only. `ui` and `app` stay portable, and that is what keeps `cargo test`
+/// runnable everywhere.
 #[test]
 fn ui_and_app_never_touch_win32() {
     for layer in ["ui", "app"] {
@@ -58,8 +59,8 @@ fn ui_and_app_never_touch_win32() {
         for banned in ["windows::", "unsafe", "std::ffi::c_void"] {
             assert!(
                 !src.contains(banned),
-                "`{layer}` contains `{banned}`: Win32 belongs in `platform`, \
-                 so route the call through a wrapper there instead"
+                "`{layer}` contains `{banned}`: Win32 belongs in `platform`, so route \
+                 the call through a wrapper there instead"
             );
         }
     }
@@ -74,7 +75,13 @@ fn tray_carries_no_tooltip() {
     // field of a public type, so any layer can reach `set_tooltip` without a
     // banned word ever appearing in the wrapper that owns the icon.
     let src = stripped_source(".");
-    for banned in ["with_tooltip", "update_tooltip", "set_tooltip", "NIF_TIP"] {
+    for banned in [
+        "with_tooltip",
+        "update_tooltip",
+        "set_tooltip",
+        "tooltip",
+        "NIF_TIP",
+    ] {
         assert!(
             !src.contains(banned),
             "`src` uses `{banned}`: the overlay is the only read-out, \
@@ -143,23 +150,13 @@ fn unit_tests_live_beside_the_module_not_inside_it() {
 
     for path in files {
         let text = fs::read_to_string(&path).expect("readable source");
-        let lines: Vec<&str> = text.lines().collect();
-        for (index, line) in lines.iter().enumerate() {
-            if !line.starts_with("#[cfg(") || !line.contains("test") {
-                continue;
-            }
-            let Some(next) = lines.get(index + 1) else {
+        for gate in 0..text.lines().count() {
+            let Some(block) = inline_test_module_span(&text, gate) else {
                 continue;
             };
-            let next = next.trim();
-            // `mod tests {` is an inline module; `mod tests;` is the sibling-file form.
-            if !next.starts_with("mod ") || !next.ends_with('{') {
-                continue;
-            }
-            let block = lines.len() - index;
             assert!(
                 block <= LIMIT,
-                "{}: an inline test module of ~{block} lines (limit {LIMIT}): move it \
+                "{}: an inline test module of {block} lines (limit {LIMIT}): move it \
                  to `<dir>/tests.rs` and declare `mod tests;` so a production read stays short",
                 path.display()
             );
@@ -192,6 +189,115 @@ fn is_test_gate(line: &str) -> bool {
     line.starts_with("#[cfg(test)]") || line.starts_with("#[cfg(all(test")
 }
 
+/// Net `{` minus `}` per line, counting only braces in real code: string, raw
+/// string and char literals and comments contribute nothing.
+///
+/// A literal's braces would otherwise keep the depth from returning to where a
+/// skipped item opened — the skip then runs past its end and every production
+/// line below it goes uncounted, the same silent undercount the per-item skip
+/// exists to prevent.
+fn code_depth_deltas(text: &str) -> Vec<i32> {
+    enum State {
+        Code,
+        LineComment,
+        BlockComment(u32),
+        Str,
+        RawStr(u32),
+        Char,
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut deltas = Vec::new();
+    let mut delta = 0i32;
+    let mut state = State::Code;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\n' {
+            deltas.push(delta);
+            delta = 0;
+            if matches!(state, State::LineComment) {
+                state = State::Code;
+            }
+            i += 1;
+            continue;
+        }
+        match state {
+            State::Code => match c {
+                '/' if chars.get(i + 1) == Some(&'/') => {
+                    state = State::LineComment;
+                    i += 1;
+                }
+                '/' if chars.get(i + 1) == Some(&'*') => {
+                    state = State::BlockComment(1);
+                    i += 1;
+                }
+                '"' => state = State::Str,
+                // Raw strings end at `"` + as many `#` as they opened with, so
+                // an inner quote cannot close them. `r#ident` (raw identifier)
+                // has no quote and falls through as code.
+                'r' if matches!(chars.get(i + 1), Some(&'"') | Some(&'#')) => {
+                    let hashes = (1..).take_while(|k| chars.get(i + k) == Some(&'#')).count();
+                    if chars.get(i + 1 + hashes) == Some(&'"') {
+                        state = State::RawStr(hashes as u32);
+                        i += 1 + hashes;
+                    }
+                }
+                '\'' => match chars.get(i + 1) {
+                    // `'\n'`, `'\''`, `'\u{7b}'`: braces inside are literal.
+                    Some(&'\\') => state = State::Char,
+                    // One plain character `'{'`; anything else is a lifetime.
+                    Some(_) if chars.get(i + 2) == Some(&'\'') => i += 2,
+                    _ => {}
+                },
+                '{' => delta += 1,
+                '}' => delta -= 1,
+                _ => {}
+            },
+            State::LineComment => {}
+            State::BlockComment(nesting) => {
+                if c == '*' && chars.get(i + 1) == Some(&'/') {
+                    state = if nesting == 1 {
+                        State::Code
+                    } else {
+                        State::BlockComment(nesting - 1)
+                    };
+                    i += 1;
+                } else if c == '/' && chars.get(i + 1) == Some(&'*') {
+                    state = State::BlockComment(nesting + 1);
+                    i += 1;
+                }
+            }
+            // `\` escapes the next character — but not a line break, whose
+            // newline still has to be counted above.
+            State::Str => {
+                if c == '\\' {
+                    i += usize::from(chars.get(i + 1).is_some_and(|n| *n != '\n'));
+                } else if c == '"' {
+                    state = State::Code;
+                }
+            }
+            State::RawStr(hashes) => {
+                if c == '"' && (0..hashes).all(|k| chars.get(i + 1 + k as usize) == Some(&'#')) {
+                    state = State::Code;
+                    i += hashes as usize;
+                }
+            }
+            State::Char => {
+                if c == '\\' {
+                    i += usize::from(chars.get(i + 1).is_some_and(|n| *n != '\n'));
+                } else if c == '\'' {
+                    state = State::Code;
+                }
+            }
+        }
+        i += 1;
+    }
+    if !text.is_empty() && !text.ends_with('\n') {
+        deltas.push(delta);
+    }
+    deltas
+}
+
 /// Lines a production read has to get through: everything except the items
 /// gated on `#[cfg(test)]`.
 ///
@@ -202,15 +308,22 @@ fn is_test_gate(line: &str) -> bool {
 /// hid every production line below it, so those two files reported roughly
 /// two-thirds of their real length.
 fn production_lines(text: &str) -> usize {
+    let deltas = code_depth_deltas(text);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        deltas.len(),
+        lines.len(),
+        "the brace scan lost or invented lines"
+    );
     let mut count = 0;
     let mut depth = 0i32;
     // `Some(depth)` while inside a skipped item: the depth it opened at.
     let mut skipping: Option<i32> = None;
     // Set by a `#[cfg(test)]` attribute, cleared by the item it gates.
     let mut gated = false;
-    for line in text.lines() {
+    for (line, delta) in lines.iter().zip(deltas) {
         let before = depth;
-        depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
+        depth += delta;
         if let Some(open) = skipping {
             // A skipped item ends where its braces close; `open` is the depth it
             // opened at, so the closing brace is the first line below it.
@@ -280,6 +393,11 @@ pub use mock::MockBackend;
 fn helper() {
     let json = \"{}\";
     assert_eq!(json, \"{}\");
+    let open = '{';
+    let close = \"}\";
+    let raw = r#\"{\"#;
+    let text = \"{\";
+    /* a { that never closes */
 }
 fn after() {}
 #[cfg(test)]
@@ -288,6 +406,66 @@ mod inline {
 }
 ";
     assert_eq!(production_lines(source), 2, "lines: {source}");
+}
+
+/// Lines of the inline `mod ... {` a `#[cfg(test)]` gate opens at `gate`
+/// (the gate line included), or `None` when that line gates no inline module.
+///
+/// Attributes between the gate and the item belong to it, an indented gate is
+/// still a gate, and the span runs to the module's own closing brace: measuring
+/// to end of file would charge a mid-file module every line below it.
+fn inline_test_module_span(text: &str, gate: usize) -> Option<usize> {
+    let lines: Vec<&str> = text.lines().collect();
+    if !is_test_gate(lines.get(gate)?) {
+        return None;
+    }
+    let mut item = gate + 1;
+    while let Some(line) = lines.get(item) {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("#[") {
+            item += 1;
+        } else {
+            break;
+        }
+    }
+    let declaration = lines.get(item)?.trim();
+    // `mod tests {` is an inline module; `mod tests;` is the sibling-file form.
+    if !declaration.starts_with("mod ") || !declaration.ends_with('{') {
+        return None;
+    }
+    let deltas = code_depth_deltas(text);
+    let mut depth = 0i32;
+    for (at, delta) in deltas.iter().enumerate().skip(item) {
+        depth += delta;
+        if depth <= 0 {
+            return Some(at - gate + 1);
+        }
+    }
+    None
+}
+
+/// The gate shapes `inline_test_module_span` has to recognise: an indented
+/// gate, attributes between the gate and the item, and a module that is not the
+/// last item in the file.
+#[test]
+fn inline_test_module_span_sees_every_gate_shape() {
+    let source = "\
+fn before() {}
+mod outer {
+    #[cfg(test)]
+    #[allow(dead_code)]
+    mod tests {
+        fn inner() {}
+        fn more() {}
+    }
+    fn middle() {}
+}
+fn after() {}
+";
+    // Gate at line 2 through the module's own closing brace at line 7.
+    assert_eq!(inline_test_module_span(source, 2), Some(6), "{source}");
+    assert_eq!(inline_test_module_span(source, 0), None, "not a gate");
+    assert_eq!(inline_test_module_span(source, 5), None, "not a gate");
 }
 
 /// Release notes are the last rule that lived only in prose: they must be
@@ -349,11 +527,48 @@ fn release_notes_are_bilingual_and_user_visible() {
             }
         }
 
-        for banned in ["sha256", "SHA256", "bytes", "KB"] {
+        // Every heading is one of the mirrored pairs: a fourth section type has
+        // no mirror rule and could ship half-translated.
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix("### ") {
+                let heading = rest.trim();
+                assert!(
+                    MIRROR
+                        .iter()
+                        .any(|(zh, en)| heading == *zh || heading == *en),
+                    "{name}: `### {heading}` is none of the mirrored sections"
+                );
+            }
+        }
+
+        // No hashes and no artefact sizes, in any spelling: the notes describe
+        // behaviour, never the file that carries it. Units need word boundaries
+        // (`remembered` contains `mb`) while still firing after a digit (`2MB`);
+        // the CJK spellings have no word boundaries at all.
+        let lowered = text.to_lowercase();
+        for word in [
+            "sha256", "sha-256", "hash", "byte", "bytes", "kb", "kib", "mb", "mib", "gb",
+        ] {
             assert!(
-                !text.contains(banned),
-                "{name}: release notes must not mention `{banned}` - only user-visible behaviour"
+                !has_token(&lowered, word),
+                "{name}: release notes must not mention `{word}` - only user-visible behaviour"
+            );
+        }
+        for phrase in ["哈希", "散列", "字节", "体积"] {
+            assert!(
+                !lowered.contains(phrase),
+                "{name}: release notes must not mention `{phrase}` - only user-visible behaviour"
             );
         }
     }
+}
+
+/// Whether `text` contains `word` as a standalone token: only a letter before
+/// it blocks the match, so `2MB` is banned while `remembered` is not.
+fn has_token(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + word.len()..].chars().next();
+        before.is_none_or(|c| !c.is_alphabetic()) && after.is_none_or(|c| !c.is_alphanumeric())
+    })
 }

@@ -139,6 +139,10 @@ impl<B: AudioBackend> App<B> {
             }
         };
         let snap = backend.fetch_snapshot_clamped(&cfg);
+        // Startup has no mirror to keep yet: seed the midpoint a failed first
+        // read used to fabricate, and the first resync replaces it.
+        let cached_volume = snap.volume.unwrap_or(50);
+        let cached_mute = snap.mute.unwrap_or(false);
         let default_id = snap.default_device.as_ref().map(|d| d.id.clone());
         let default_input_id = snap.default_input_device.as_ref().map(|d| d.id.clone());
         tray.rebuild_menu(&MenuState {
@@ -147,11 +151,11 @@ impl<B: AudioBackend> App<B> {
             default_id: default_id.as_deref(),
             inputs: &snap.input_devices,
             default_input_id: default_input_id.as_deref(),
-            muted: snap.mute,
+            muted: cached_mute,
             autostart,
             ui_lang,
         });
-        tray.update_icon_if_changed(snap.mute);
+        tray.update_icon_if_changed(cached_mute);
         let osd = OsdOverlay::new();
         Ok(Self {
             cfg,
@@ -164,8 +168,8 @@ impl<B: AudioBackend> App<B> {
             hook: None,
             hook_install_at: Instant::now() + Duration::from_millis(180),
             should_exit: false,
-            cached_volume: snap.volume,
-            cached_mute: snap.mute,
+            cached_volume,
+            cached_mute,
             cached_device: snap.default_device.clone(),
             osd_deadline: None,
             osd,
@@ -193,6 +197,8 @@ impl<B: AudioBackend> App<B> {
             }
             self.maybe_install_hook();
             self.poll_click();
+            self.poll_devices();
+            self.poll_volume_state();
             self.poll_tray();
             self.poll_menu();
             if self.should_exit {
@@ -200,8 +206,6 @@ impl<B: AudioBackend> App<B> {
             }
             self.poll_hotkeys();
             self.poll_wheel();
-            self.poll_devices();
-            self.poll_volume_state();
             self.poll_osd();
             if frame_start.elapsed() >= HOOK_STALL_REARM {
                 self.rearm_hook();

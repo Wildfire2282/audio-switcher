@@ -15,6 +15,9 @@ use super::*;
 #[test]
 #[ignore = "requires WASAPI hardware, run with --ignored"]
 fn integration_external_volume_change_notifies() {
+    let _gate = crate::INTEGRATION_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     use super::notify::VOLUME_NOTIFY_ID;
     use std::time::Duration;
     let _com = crate::platform::ComGuard::init().expect("COM init");
@@ -99,6 +102,9 @@ fn integration_external_volume_change_notifies() {
 #[test]
 #[ignore = "requires WASAPI hardware, run with --ignored"]
 fn integration_capture_enumerate_switch_restores() {
+    let _gate = crate::INTEGRATION_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     use std::time::Duration;
     let _com = crate::platform::ComGuard::init().expect("COM init");
     let mut backend = WasapiBackend::new();

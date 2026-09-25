@@ -29,7 +29,7 @@ Run `audio-switcher-v<version>-x64.exe` from the [releases page](https://github.
 
 ### Volume limit
 
-- **Volume limit** caps the master volume at `25`, `50` or `75%`.
+- **Volume Limit** caps the master volume at `25`, `50` or `75%`.
 - **Enabled** toggles the cap on or off; picking a preset switches it on.
 
 ### Hotkeys
@@ -57,9 +57,22 @@ Each key takes a combination string; `null` disables the action:
 
 A combination another program owns is reported in a dialog and left unbound for the session; the setting stays in `config.json`, so it binds again once the other program exits, and the remaining hotkeys register normally.
 
+### Config fields
+
+`config.json` holds the settings the menu writes plus the hotkeys above; its header documents the same fields bilingually.
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `version` | number | Schema version the tool writes; it drives settings migration. |
+| `lang` | `"system"`, `"zh"`, `"en"` | UI language; `"system"` follows the OS. |
+| `volume_limit_enabled` | `true`, `false` | Whether the volume cap applies. |
+| `volume_limit` | `1`–`100` | Master volume ceiling, in percent. |
+| `autostart_mode` | `"off"`, `"user"`, `"admin"` | Logon start: none, a `Run` entry, or an elevated logon task. |
+| `hotkeys` | object | One combination per action, as above. |
+
 ### System and settings
 
-- **Volume mixer** and **Sound settings** open the system tools, centered on the screen.
+- **Open Volume Mixer** and **Open Sound Settings** open the system tools, centered on the screen.
 - **Auto Launch** picks how the tool starts at logon: **Off**, **Standard** (a `Run` entry, no prompt), or **Administrator** (a logon task that starts the tool elevated, so the hover wheel keeps working over windows owned by elevated apps such as Tencent Androws). Switching to or from **Administrator** asks once for elevation; the group is grayed while the state cannot be read.
 - The language submenu offers **Follow System**, **中文**, **English**.
 - **About** opens the release homepage; **Exit** quits and releases the hotkeys.
@@ -89,12 +102,12 @@ Log files older than 14 days are removed when the tool starts.
 
 - 选择**输出**或**输入**条目即把该设备设为默认；打勾的条目是当前默认设备。
 - **刷新设备**重新枚举端点。睡眠恢复与重插后列表可能过时。
-- 完全没有枚举到端点时，用灰色的**无音频设备**行替代列表。
+- 完全没有枚举到端点时，用灰色的**未检测到音频设备**行替代列表。
 
 ### 静音与音量
 
-- **静音**切换全局静音；中键点击托盘图标等效。
-- 在托盘图标上滚动滚轮调节音量，持续滚动时按 `1%` → `2%` → `5%` 加速；反向滚动从新的 `1%` 步长开始。音量加的动——滚轮或 `volume_up` 快捷键——同时解除静音，与音量加键一致；音量减保持静音。
+- **全局静音**切换全局静音；中键点击托盘图标等效。
+- 在托盘图标上滚动滚轮调节音量，持续滚动时按 `1%` → `2%` → `5%` 加速；反向滚动从新的 `1%` 步长开始。音量加的动作——滚轮或 `volume_up` 快捷键——同时解除静音，与音量加键一致；音量减保持静音。
 - 每次音量变化都在托盘图标上方浮出小块浮层：设备名、滑块、百分比。最后一次变化约两秒后隐藏，任何鼠标键按下也立即隐藏，因此右键不会把它留在刚打开的菜单之上。滑块对所有读数（`5%`、`100%`、静音）保持同一长度，音量变化时条子不移动。
 - 浮层跟随 Windows shell——深浅色主题、强调色、系统菜单字体——与 shell 自身菜单保持同一套视觉语言。
 
@@ -128,9 +141,22 @@ Log files older than 14 days are removed when the tool starts.
 
 被其他程序占用的组合会弹窗报告，本次运行保持未绑定；该设置会留在 `config.json` 里，占用程序退出后即恢复生效，其余快捷键照常注册。
 
+### 配置字段
+
+`config.json` 保存菜单写入的设置与上文的快捷键；文件头以中英双语说明同样的字段。
+
+| 字段 | 取值 | 含义 |
+| --- | --- | --- |
+| `version` | 数字 | 工具写入的结构版本，驱动设置迁移。 |
+| `lang` | `"system"`、`"zh"`、`"en"` | 界面语言；`"system"` 跟随系统。 |
+| `volume_limit_enabled` | `true`、`false` | 是否启用音量上限。 |
+| `volume_limit` | `1`–`100` | 主音量上限（百分比）。 |
+| `autostart_mode` | `"off"`、`"user"`、`"admin"` | 登录启动方式：不启动、注册表 `Run`、管理员登录任务。 |
+| `hotkeys` | 对象 | 每个动作一个组合字符串，见上文。 |
+
 ### 系统与设置
 
-- **音量合成器**与**声音设置**打开系统工具，窗口居中显示。
+- **打开音量合成器**与**打开声音设置**打开对应的系统工具，窗口居中显示。
 - **开机自启**选择登录时的启动方式：**关闭**、**普通权限**（注册表 `Run`，不弹 UAC）、**管理员权限**（登录任务，以管理员启动，因此在管理员权限的应用窗口——例如腾讯应用宝 / Androws——上面悬停滚轮仍然有效）。在**管理员权限**与其它方式之间切换会弹一次 UAC；读取不到状态时整组置灰。
 - 语言子菜单提供**跟随系统**、**中文**、**English**。
 - **关于**打开 release 主页；**退出**退出并释放快捷键。

@@ -257,22 +257,46 @@ fn unknown_lang_value_rejected_loudly() {
 }
 
 #[test]
-fn legacy_pascalcase_file_imported_once() {
+fn legacy_file_imported_once_under_each_alias_spelling() {
+    // v1 wrote the limit as `VolumeLimit`/`volumeLimit`, sometimes as a
+    // string: the alias pair plus the tolerant deserializer is the whole
+    // upgrade path, so each spelling is pinned here.
+    for raw in [
+        r#"{"version":1,"lang":"en","volume_limit_enabled":true,"VolumeLimit":"50","autostart":true}"#,
+        r#"{"version":1,"lang":"en","volume_limit_enabled":true,"volumeLimit":50,"autostart":true}"#,
+    ] {
+        let dir = tempdir().unwrap();
+        let new_path = dir.path().join("new").join("config.json");
+        let legacy_path = dir.path().join("legacy").join("config.json");
+        std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+        std::fs::write(&legacy_path, raw).unwrap();
+        assert!(import_legacy_file(&new_path, &legacy_path).is_some());
+        let loaded = AppConfig::load_from(&new_path);
+        assert_eq!(loaded.lang, Lang::En);
+        assert_eq!(loaded.volume_limit, 50);
+        // Second run is a no-op (new path exists now).
+        assert!(import_legacy_file(&new_path, &legacy_path).is_none());
+    }
+}
+
+#[test]
+fn a_parsed_legacy_config_runs_the_session_when_the_copy_fails() {
+    // Losing the file to a disk error must not lose the settings twice: the
+    // import hands the migrated config back even when the copy cannot be made.
     let dir = tempdir().unwrap();
     let new_path = dir.path().join("new").join("config.json");
     let legacy_path = dir.path().join("legacy").join("config.json");
     std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
     std::fs::write(
-            &legacy_path,
-            r#"{"version":1,"lang":"en","volume_limit_enabled":true,"volume_limit":50,"autostart":true}"#,
-        )
-        .unwrap();
-    assert!(import_legacy_file(&new_path, &legacy_path));
-    let loaded = AppConfig::load_from(&new_path);
-    assert_eq!(loaded.lang, Lang::En);
-    assert_eq!(loaded.volume_limit, 50);
-    // Second run is a no-op (new path exists now).
-    assert!(!import_legacy_file(&new_path, &legacy_path));
+        &legacy_path,
+        r#"{"version":1,"lang":"en","volume_limit_enabled":true,"VolumeLimit":"50","autostart":true}"#,
+    )
+    .unwrap();
+    // `new` is a plain file, so nothing can be written under it.
+    std::fs::write(dir.path().join("new"), b"occupied").unwrap();
+    let cfg = import_legacy_file(&new_path, &legacy_path).expect("parsed legacy config");
+    assert_eq!(cfg.lang, Lang::En);
+    assert_eq!(cfg.volume_limit, 50);
 }
 
 #[test]
@@ -290,7 +314,7 @@ fn unparsable_legacy_file_is_reported_and_left_alone() {
         r#"{"version":1,"lang":"en","wheel_acceleration":false}"#,
     )
     .unwrap();
-    assert!(!import_legacy_file(&new_path, &legacy_path));
+    assert!(import_legacy_file(&new_path, &legacy_path).is_none());
     assert!(
         !new_path.exists(),
         "defaults must not replace an unreadable legacy file"

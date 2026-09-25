@@ -24,6 +24,17 @@ impl<B: AudioBackend> App<B> {
     pub(super) fn refresh_ui(&mut self) {
         // Use batch snapshot to avoid 3 separate COM round-trips.
         let snap = self.backend.fetch_snapshot_clamped(&self.cfg);
+        // The snapshot is authoritative where it read — resyncing here is also
+        // what keeps an external change from leaving the mirror stale — but a
+        // failed read keeps the last known mirror (same rule as
+        // `resync_volume_state`): a fabricated value would move the next wheel
+        // step's origin away from the endpoint.
+        if let Some(volume) = snap.volume {
+            self.cached_volume = volume;
+        }
+        if let Some(mute) = snap.mute {
+            self.cached_mute = mute;
+        }
         let def_id = snap.default_device.as_ref().map(|d| d.id.as_str());
         let def_input_id = snap.default_input_device.as_ref().map(|d| d.id.as_str());
         let autostart = autostart_state().mode();
@@ -34,16 +45,12 @@ impl<B: AudioBackend> App<B> {
             default_id: def_id,
             inputs: &snap.input_devices,
             default_input_id: def_input_id,
-            muted: snap.mute,
+            muted: self.cached_mute,
             autostart,
             ui_lang: self.ui_lang,
         });
-        // The snapshot is authoritative: resyncing here is also what keeps an
-        // external change from leaving the mirror stale.
-        self.cached_volume = snap.volume;
-        self.cached_mute = snap.mute;
         self.cached_device.clone_from(&snap.default_device);
-        self.tray.update_icon_if_changed(snap.mute);
+        self.tray.update_icon_if_changed(self.cached_mute);
         self.refresh_osd_if_visible();
     }
 
@@ -107,15 +114,10 @@ impl<B: AudioBackend> App<B> {
         self.osd_deadline = Some(Instant::now() + Duration::from_millis(VISIBLE_MS));
     }
 
-    pub(super) fn save_and_refresh(&mut self, clamp: bool) {
+    pub(super) fn save_and_refresh(&mut self) {
         // Synchronous save for critical config — avoids loss on fast exit.
         if let Err(e) = self.cfg.save_to(&AppConfig::config_path()) {
             tracing::warn!("config save failed: {e}");
-        }
-        if clamp && self.cfg.volume_limit_enabled {
-            if let Err(e) = self.backend.clamp_volume_if_needed(&self.cfg) {
-                tracing::warn!("volume clamp failed: {e}");
-            }
         }
         self.refresh_ui();
     }
@@ -133,7 +135,7 @@ impl<B: AudioBackend> App<B> {
             MenuAction::VolEnabled | MenuAction::VolLimit(_) => {
                 // The new limit applies to the volume playing now.
                 if apply_menu_config(&mut self.cfg, &mut self.ui_lang, &action) {
-                    self.save_and_refresh(true);
+                    self.save_and_refresh();
                 }
             }
             MenuAction::Refresh => {
@@ -161,9 +163,8 @@ impl<B: AudioBackend> App<B> {
             }
             MenuAction::Autostart(mode) => self.apply_autostart_mode(mode),
             MenuAction::LangSystem | MenuAction::LangZh | MenuAction::LangEn => {
-                // The language does not touch the volume: no clamp.
                 if apply_menu_config(&mut self.cfg, &mut self.ui_lang, &action) {
-                    self.save_and_refresh(false);
+                    self.save_and_refresh();
                 }
             }
             MenuAction::About => {
@@ -229,7 +230,7 @@ impl<B: AudioBackend> App<B> {
         match crate::platform::set_autostart_mode(mode) {
             Ok(()) => {
                 self.cfg.autostart_mode = mode;
-                self.save_and_refresh(false);
+                self.save_and_refresh();
             }
             Err(e) => {
                 tracing::warn!("set_autostart_mode failed: {e}");

@@ -260,6 +260,9 @@ impl Default for AppConfig {
 /// not exist on exactly the machines where they need to find it.
 #[must_use]
 pub fn config_comment_header(path: &Path) -> String {
+    // A newline in the path would end the `//` comment early and leave the rest
+    // of the line as bare JSON: every load then fails and resets the file.
+    let location = path.display().to_string().replace(['\n', '\r'], " ");
     format!(
         "// AudioSwitcher config — edit, save, then restart the app to apply.\n\
     // 配置文件 — 改完保存后重启生效。\n\
@@ -284,7 +287,7 @@ pub fn config_comment_header(path: &Path) -> String {
     //     \"hotkeys\": {{ \"mute\": \"Ctrl+Alt+M\", \"volume_up\": \"Ctrl+Alt+Up\", \"volume_down\": \"Ctrl+Alt+Down\", \"next_device\": null, \"prev_device\": null }}\n\
     //   A combination another program owns is reported and left unbound for the session; the setting stays here.\n\
     //   被其他程序占用的组合会弹窗并本次运行不生效；该设置仍留在此文件中。\n",
-        path.display()
+        location
     )
 }
 
@@ -390,19 +393,32 @@ fn legacy_config_path() -> Option<PathBuf> {
     Some(dir.join(LEGACY_DIR_NAME).join("config.json"))
 }
 
-/// Copy the legacy file to `new_path` when `new_path` is missing. Pure over
-/// explicit paths so tests can isolate it from the real `%APPDATA%`.
+/// Copy the legacy file to `new_path` when `new_path` is missing, returning the
+/// migrated settings whenever they parsed. Pure over explicit paths so tests
+/// can isolate it from the real `%APPDATA%`.
 ///
 /// A legacy file the current schema cannot parse is reported and skipped, not
 /// replaced by defaults: `deny_unknown_fields` makes one removed key fail the
 /// whole parse, and silently overwriting the user's settings as "imported" is
-/// the opposite of the loud reset `AppConfig::load_from_bytes` performs.
-fn import_legacy_file(new_path: &Path, legacy_path: &Path) -> bool {
+/// the opposite of the loud reset `AppConfig::load_from_bytes` performs. A file
+/// that parses but cannot be copied still runs the session on it: dropping the
+/// settings over a disk error would lose them a second time.
+fn import_legacy_file(new_path: &Path, legacy_path: &Path) -> Option<AppConfig> {
     if new_path.exists() || !legacy_path.exists() {
-        return false;
+        return None;
     }
-    let Ok(bytes) = std::fs::read(legacy_path) else {
-        return false;
+    let bytes = match std::fs::read(legacy_path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            // Logged, not silent: a transient read failure here ends the
+            // one-shot import (the defaults `load_from` writes make the new
+            // path exist), so the trace is the only record of the lost file.
+            tracing::warn!(
+                "legacy config {} unreadable ({e}); starting from defaults",
+                legacy_path.display()
+            );
+            return None;
+        }
     };
     let cfg = match serde_json::from_slice::<AppConfig>(&strip_json_comments(&bytes)) {
         Ok(cfg) => AppConfig::migrate(cfg),
@@ -411,10 +427,14 @@ fn import_legacy_file(new_path: &Path, legacy_path: &Path) -> bool {
                 "legacy config {} ignored ({e}); starting from defaults",
                 legacy_path.display()
             );
-            return false;
+            return None;
         }
     };
-    cfg.save_to(new_path).is_ok()
+    match cfg.save_to(new_path) {
+        Ok(()) => tracing::debug!("imported legacy config"),
+        Err(e) => tracing::warn!("legacy config import write failed ({e}); using it in memory"),
+    }
+    Some(cfg)
 }
 
 impl AppConfig {
@@ -463,8 +483,8 @@ impl AppConfig {
         let path = Self::config_path();
         if !path.exists() {
             if let Some(legacy) = legacy_config_path() {
-                if import_legacy_file(&path, &legacy) {
-                    tracing::debug!("imported legacy config");
+                if let Some(cfg) = import_legacy_file(&path, &legacy) {
+                    return cfg;
                 }
             }
         }
@@ -604,18 +624,21 @@ impl AppConfig {
         // its own it can land with the new name and old or empty contents after
         // a power loss — the one way a settings file loses everything. Small
         // and rare (user actions only), so the fsync is worth it here.
-        {
+        let staged = std::fs::File::create(&tmp_path).and_then(|mut file| {
             use std::io::Write as _;
-            let mut file = std::fs::File::create(&tmp_path)?;
             file.write_all(body.as_bytes())?;
-            file.sync_all()?;
-        }
+            file.sync_all()
+        });
         // On Windows rename uses MoveFileExW(REPLACE_EXISTING) and atomically replaces.
-        if let Err(e) = std::fs::rename(&tmp_path, path) {
-            let _ = std::fs::remove_file(&tmp_path);
-            return Err(e);
+        // Any failure removes the staged copy: the token is unique per call, so
+        // a leftover is never reclaimed and one accumulates per failed save.
+        match staged.and_then(|()| std::fs::rename(&tmp_path, path)) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp_path);
+                Err(e)
+            }
         }
-        Ok(())
     }
 }
 

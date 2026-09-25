@@ -163,8 +163,12 @@ fn read_registry_value(subkey: &str, name: &str) -> Option<Vec<u8>> {
 }
 
 #[test]
+#[cfg(windows)]
 #[ignore = "writes and removes the real HKCU Run value; run explicitly"]
 fn run_value_round_trip() {
+    let _gate = crate::INTEGRATION_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // The `auto-launch` behaviour this crate now implements itself, against the
     // real registry: write, read back as installed, then remove. The stored
     // bytes are the contract an installed copy of another version still has to
@@ -234,8 +238,12 @@ fn startup_approved_state_follows_the_state_byte() {
 }
 
 #[test]
+#[cfg(windows)]
 #[ignore = "creates and deletes a real scheduled task; run explicitly"]
 fn create_and_delete_task_round_trip() {
+    let _gate = crate::INTEGRATION_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // Exercises the production path end to end against the real tool.
     let _ = delete_task();
     create_task().expect("create task");

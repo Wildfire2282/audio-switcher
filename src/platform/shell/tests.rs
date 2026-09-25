@@ -41,6 +41,9 @@ mod centring {
     #[test]
     #[ignore = "opens the real system tools; run explicitly"]
     fn the_launched_system_tool_is_centred() {
+        let _gate = crate::INTEGRATION_GATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (what, open) in [
             ("volume mixer", open_volume_mixer as fn(&str)),
             ("sound settings", open_sound_settings as fn(&str)),

@@ -37,8 +37,9 @@ mod notify;
 use default_device::set_default_endpoint_raw;
 #[cfg(windows)]
 use notify::{
-    SUPPRESS_WINDOW_MS, register_notification_client, spawn_volume_notify_worker,
-    suppress_self_changes_for, take_device_changed, take_volume_changed,
+    SUPPRESS_WINDOW_MS, device_changed_pending, register_notification_client,
+    request_volume_reregister, spawn_volume_notify_worker, suppress_self_changes_for,
+    take_device_changed, take_volume_changed,
 };
 
 /// The Windows WASAPI backend.
@@ -80,13 +81,27 @@ impl WasapiBackend {
     /// proxy belongs to the `audiosrv` instance that created it, so after that
     /// service restarts (sleep/resume, a crash, a driver update) every call
     /// through it fails until the process ends — a clear that kept it left the
-    /// menu's "Refresh" unable to fix anything.
+    /// menu's "Refresh" unable to fix anything. The volume callback rides the
+    /// same dying generation of interfaces, so the clear also asks the notify
+    /// worker to re-register it (see [`request_volume_reregister`]).
+    ///
+    /// This is the manual recovery path. Enumeration drops only the lists
+    /// ([`Self::invalidate_lists`]): re-activating endpoints there, per
+    /// enumerate, churned the COM stack hard enough to race MMDevApi itself.
     pub fn clear_cache(&mut self) {
+        self.invalidate_lists();
+        self.cached_enumerator = None;
+        request_volume_reregister();
+    }
+
+    /// Drop the device lists only. Device arrival/removal does not kill the
+    /// enumerator, and the volume callback follows the default endpoint
+    /// through the notification the change itself raises.
+    fn invalidate_lists(&mut self) {
         self.cached = None;
         self.cache_time = None;
         self.input_cached = None;
         self.input_cache_time = None;
-        self.cached_enumerator = None;
     }
 
     /// Get or create the cached IMMDeviceEnumerator (fewer CoCreateInstance calls).
@@ -130,19 +145,21 @@ impl WasapiBackend {
                         // Contractually 0.0..=1.0; clamp so a lying driver cannot
                         // break the 0..=100 invariant (NaN folds to 0 via the
                         // saturating float-to-int cast).
-                        snap.volume = (scalar.clamp(0.0, 1.0) * 100.0).round() as u32;
+                        snap.volume = Some((scalar.clamp(0.0, 1.0) * 100.0).round() as u32);
                     }
                     if let Ok(m) = vol.GetMute() {
-                        snap.mute = m.as_bool();
+                        snap.mute = Some(m.as_bool());
                     }
                     // Clamp inline so callers skip a second get_volume_and_mute.
                     if cfg.volume_limit_enabled {
-                        let clamped = clamp_volume(snap.volume, cfg);
-                        if clamped != snap.volume {
-                            suppress_self_changes_for(SUPPRESS_WINDOW_MS);
-                            let v = clamped.min(100) as f32 / 100.0;
-                            if vol.SetMasterVolumeLevelScalar(v, std::ptr::null()).is_ok() {
-                                snap.volume = clamped;
+                        if let Some(volume) = snap.volume {
+                            let clamped = clamp_volume(volume, cfg);
+                            if clamped != volume {
+                                suppress_self_changes_for(SUPPRESS_WINDOW_MS);
+                                let v = clamped.min(100) as f32 / 100.0;
+                                if vol.SetMasterVolumeLevelScalar(v, std::ptr::null()).is_ok() {
+                                    snap.volume = Some(clamped);
+                                }
                             }
                         }
                     }
@@ -195,8 +212,11 @@ impl WasapiBackend {
         enumerator: &windows::Win32::Media::Audio::IMMDeviceEnumerator,
         flow: EDataFlow,
     ) -> Result<Vec<AudioDevice>, AudioError> {
-        if take_device_changed() {
-            self.clear_cache();
+        // Peek, not take: the one-shot flag belongs to the message loop's
+        // device pump (`take_notification`), and a swap here would swallow the
+        // change before the loop ever latched it — the menu then stays stale.
+        if device_changed_pending() {
+            self.invalidate_lists();
         }
         let (cache, cache_time) = if flow == eCapture {
             (&self.input_cached, &self.input_cache_time)
@@ -240,11 +260,11 @@ impl WasapiBackend {
         }
     }
 
-    /// Polls the notification flag and clears cache if a device changed.
-    /// Single helper shared by the inherent method and the trait impl.
+    /// Polls the notification flag and clears the device lists if a device
+    /// changed. Single helper shared by the inherent method and the trait impl.
     fn take_notification(&mut self) -> bool {
         if take_device_changed() {
-            self.clear_cache();
+            self.invalidate_lists();
             return true;
         }
         false
@@ -313,12 +333,12 @@ impl WasapiBackend {
             }
         }
         if applied == 0 {
-            return Err(AudioError::Failed(first_error.map_or_else(
-                || "no role accepted the switch".into(),
-                |e| e.to_string(),
-            )));
+            return Err(first_error.map_or_else(
+                || AudioError::Failed("no role accepted the switch".into()),
+                AudioError::from,
+            ));
         }
-        self.clear_cache();
+        self.invalidate_lists();
         Ok(())
     }
 
@@ -444,7 +464,7 @@ impl AudioBackend for WasapiBackend {
                     {
                         return Ok(());
                     }
-                    Err(AudioError::Failed(e.to_string()))
+                    Err(e.into())
                 }
             }
         }
@@ -468,7 +488,7 @@ impl AudioBackend for WasapiBackend {
             // Self-initiated change: suppress our own notification.
             suppress_self_changes_for(SUPPRESS_WINDOW_MS);
             vol.SetMute(mute, std::ptr::null())
-                .map_err(|e| AudioError::Failed(e.to_string()))
+                .map_err(AudioError::from)
         }
     }
 
@@ -552,10 +572,6 @@ impl AudioBackend for WasapiBackend {
     fn clear_cache(&mut self) {
         WasapiBackend::clear_cache(self);
     }
-}
-#[cfg(not(windows))]
-pub fn take_device_changed() -> bool {
-    false
 }
 
 #[cfg(all(test, windows))]

@@ -103,8 +103,16 @@ pub trait AudioBackend {
         let default_device = self.get_default_device();
         let input_devices = self.enumerate_input_devices().unwrap_or_default();
         let default_input_device = self.get_default_input_device();
-        let (volume, mute) = self.get_volume_and_mute().unwrap_or((50, false));
-        let volume = crate::config::clamp_volume(volume, cfg);
+        let (volume, mute) = match self.get_volume_and_mute() {
+            Ok((volume, mute)) => (Some(crate::config::clamp_volume(volume, cfg)), Some(mute)),
+            Err(e) => {
+                // `None`, never a fabricated reading: the caller keeps its last
+                // known mirror, and a made-up `50` would move the next wheel
+                // step's origin away from the endpoint.
+                tracing::warn!("snapshot volume/mute read failed: {e}");
+                (None, None)
+            }
+        };
         AudioSnapshot {
             devices,
             default_device,
@@ -118,28 +126,16 @@ pub trait AudioBackend {
 
 /// Snapshot of the current audio state — fetched once per UI refresh to avoid
 /// repeated `CoCreateInstance` calls.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AudioSnapshot {
     pub devices: Vec<AudioDevice>,
     pub default_device: Option<AudioDevice>,
     pub input_devices: Vec<AudioDevice>,
     pub default_input_device: Option<AudioDevice>,
-    /// `0..=100`.
-    pub volume: u32,
-    pub mute: bool,
-}
-
-impl Default for AudioSnapshot {
-    fn default() -> Self {
-        Self {
-            devices: Vec::new(),
-            default_device: None,
-            input_devices: Vec::new(),
-            default_input_device: None,
-            volume: 50,
-            mute: false,
-        }
-    }
+    /// `0..=100`; `None` when the read failed.
+    pub volume: Option<u32>,
+    /// `None` when the read failed.
+    pub mute: Option<bool>,
 }
 
 #[cfg(test)]

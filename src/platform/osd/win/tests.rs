@@ -13,7 +13,7 @@ use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Gdi::{GetDC, GetPixel, ReleaseDC};
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetSystemMetrics, GetWindowRect, IsWindowVisible, MSG, PM_REMOVE,
-    PeekMessageW, SM_CXSCREEN, SM_CYSCREEN,
+    PeekMessageW, SM_CXSCREEN, SM_CYSCREEN, SW_SHOWNOACTIVATE, ShowWindow,
 };
 
 /// Regression: a window procedure that handles `WM_PAINT` without
@@ -26,6 +26,14 @@ fn window_does_not_flood_wm_paint() {
     let Some(osd) = OsdOverlay::new() else {
         panic!("OsdOverlay::new() returned None: window creation failed");
     };
+    // Windows only generates `WM_PAINT` for visible windows: shown (not
+    // activated — the overlay never activates) and then invalidated, the queue
+    // below really carries the paint the pairing has to discharge.
+    // SAFETY: the window is live and owned here; `SW_SHOWNOACTIVATE` keeps the
+    // no-activation invariant the overlay is built on.
+    unsafe {
+        let _ = ShowWindow(osd.hwnd, SW_SHOWNOACTIVATE);
+    }
     // Force a non-empty update region so the paint pairing is exercised
     // even where creation alone left the window clean.
     // SAFETY: invalidating the live window's own client area.
@@ -55,6 +63,8 @@ struct Sample {
     card: u32,
     corner: u32,
     fill_px: u32,
+    /// Neutral (muted) level fill on the bar row.
+    muted_px: u32,
     track_px: u32,
     name_ink: u32,
     /// X of the last column the slider painted, so its length can be compared
@@ -82,6 +92,7 @@ fn sample(tokens: Palette, content: &OsdContent) -> Sample {
     let name_mid = scale(NAME_TOP, dpi) + scale(NAME_H, dpi) / 2;
     let card_rgb = rgb(tokens.card).0 & 0x00FF_FFFF;
     let fill_rgb = rgb(tokens.fill).0 & 0x00FF_FFFF;
+    let muted_fill_rgb = rgb(tokens.muted_fill).0 & 0x00FF_FFFF;
     let track_rgb = rgb(tokens.track).0 & 0x00FF_FFFF;
     // SAFETY: `GetDC`/`ReleaseDC` balance on the live window and every
     // `GetPixel` reads inside the client area computed above.
@@ -90,6 +101,7 @@ fn sample(tokens: Palette, content: &OsdContent) -> Sample {
         let card = GetPixel(dc, w / 2, scale(2, dpi)).0 & 0x00FF_FFFF;
         let corner = GetPixel(dc, 0, 0).0 & 0x00FF_FFFF;
         let mut fill_px = 0u32;
+        let mut muted_px = 0u32;
         let mut track_px = 0u32;
         let mut name_ink = 0u32;
         let mut bar_right = -1i32;
@@ -97,6 +109,9 @@ fn sample(tokens: Palette, content: &OsdContent) -> Sample {
             let slider = GetPixel(dc, x, bar_mid).0 & 0x00FF_FFFF;
             if slider == fill_rgb {
                 fill_px += 1;
+                bar_right = x;
+            } else if slider == muted_fill_rgb {
+                muted_px += 1;
                 bar_right = x;
             } else if slider == track_rgb {
                 track_px += 1;
@@ -113,6 +128,7 @@ fn sample(tokens: Palette, content: &OsdContent) -> Sample {
             card,
             corner,
             fill_px,
+            muted_px,
             track_px,
             name_ink,
             bar_right,
@@ -287,6 +303,13 @@ fn slider_keeps_one_length_whatever_the_readout_says() {
         muted.bar_right, wide.bar_right,
         "the bar resized for the mute word"
     );
+    // The muted level paints in the neutral fill, never the accent: a swapped
+    // brush ships an accent-coloured bar behind the mute word.
+    assert_eq!(
+        muted.fill_px, 0,
+        "the muted bar must not paint in the accent fill"
+    );
+    assert!(muted.muted_px > 0, "the muted level not painted at all");
 }
 
 /// Bottom taskbar: the card sits above the icon (which is inside the

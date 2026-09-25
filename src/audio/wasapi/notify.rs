@@ -71,6 +71,17 @@ pub fn take_device_changed() -> bool {
     DEVICE_CHANGED.swap(false, AtomicOrdering::AcqRel)
 }
 
+/// Whether a device change is still waiting for the message loop to consume.
+///
+/// Peek, not take: enumeration can run before the loop's device pump does (a
+/// hotkey or menu action enumerates first), and consuming the flag there would
+/// leave the loop never latching the change — the menu then stays stale until
+/// an unrelated notification happens to arrive.
+#[cfg(windows)]
+pub fn device_changed_pending() -> bool {
+    DEVICE_CHANGED.load(AtomicOrdering::Acquire)
+}
+
 /// Set when the endpoint volume/mute changed externally (media keys, other
 /// apps, system mixer). Self-initiated changes are suppressed via
 /// [`suppress_self_changes_for`].
@@ -250,6 +261,26 @@ static VOLUME_REREGISTER: AtomicBool = AtomicBool::new(false);
 static REREG_CV: std::sync::LazyLock<(Mutex<()>, std::sync::Condvar)> =
     std::sync::LazyLock::new(|| (Mutex::new(()), std::sync::Condvar::new()));
 
+/// Signal the worker to drop its live endpoint instance and re-register the
+/// volume callback on the current default endpoint.
+///
+/// The registration dies with the endpoint instance that owns it, and that
+/// instance's proxy dies with the `audiosrv` instance behind it — after a
+/// service restart (sleep/resume, a crash, a driver update) the callback
+/// simply stops arriving, with no error anywhere. This signal is the recovery:
+/// `WasapiBackend::clear_cache`, the menu's "Refresh", raises it too.
+///
+/// Raised under the mutex for the reason in [`REREG_CV`]'s doc.
+#[cfg(windows)]
+pub(super) fn request_volume_reregister() {
+    let _guard = REREG_CV
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    VOLUME_REREGISTER.store(true, AtomicOrdering::Release);
+    REREG_CV.1.notify_one();
+}
+
 /// Activate the default render endpoint and register the volume callback on it.
 ///
 /// Returns the live `(endpoint id, interface)` pair: keeping the interface alive
@@ -304,11 +335,11 @@ unsafe fn activate_volume_callback() -> Option<(String, IAudioEndpointVolume)> {
 /// releases the old instance and registers on the new default endpoint.
 #[cfg(windows)]
 pub(super) fn spawn_volume_notify_worker() {
-    static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    if STARTED.set(()).is_err() {
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if STARTED.load(AtomicOrdering::Acquire) {
         return;
     }
-    let _ = std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
         .name("volume-notify".into())
         .spawn(|| {
             use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
@@ -367,6 +398,15 @@ pub(super) fn spawn_volume_notify_worker() {
                 );
             }
         });
+    // Latched only once the thread exists: a failed spawn must stay retryable
+    // (the next `WasapiBackend::new` asks again), or external volume changes
+    // go dark for the process lifetime.
+    match spawned {
+        Ok(_thread) => {
+            STARTED.store(true, AtomicOrdering::Release);
+        }
+        Err(e) => tracing::warn!("volume-notify worker spawn failed: {e}"),
+    }
 }
 
 /// Endpoint-notification client (`IMMNotificationClient`) as a manual COM
@@ -467,18 +507,11 @@ unsafe extern "system" fn device_on_default_changed(
     _device_id: windows::core::PCWSTR,
 ) -> windows::core::HRESULT {
     use windows::Win32::Foundation::S_OK;
-    // Signal the MTA worker to drop its (dying device's) registration
-    // and re-register on the new default endpoint. Never block the COM
-    // callback thread: the id is informational only, so a contended
-    // lock is simply skipped — the worker clears/sets it itself.
-    {
-        let _guard = REREG_CV
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        VOLUME_REREGISTER.store(true, AtomicOrdering::Release);
-        REREG_CV.1.notify_one();
-    }
+    // Re-register on the new default endpoint (the old device's registration
+    // is dying with it). Never block the COM callback thread on the id lock
+    // below: the id is informational only, so a contended lock is simply
+    // skipped — the worker clears/sets it itself.
+    request_volume_reregister();
     if let Ok(mut id) = VOLUME_NOTIFY_ID.try_lock() {
         *id = None;
     }

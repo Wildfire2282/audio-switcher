@@ -41,6 +41,9 @@ unsafe extern "system" fn probe_proc(n_code: i32, w: WPARAM, l: LPARAM) -> LRESU
 #[test]
 #[ignore = "injects synthetic mouse input; run explicitly"]
 fn low_level_hook_wakes_the_message_wait() {
+    let _gate = crate::INTEGRATION_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     const IDLE_MS: u32 = 200;
     const INJECT_AFTER_MS: u64 = 50;
     // SAFETY: installing a WH_MOUSE_LL hook on this thread with a valid

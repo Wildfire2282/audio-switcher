@@ -29,6 +29,7 @@ const MOD_WIN: u32 = 0x0008;
 /// Win32 `MOD_NOREPEAT`. Passed only at registration: without it the shell
 /// auto-repeats while the combination is held, so one press-and-hold fires the
 /// action many times a second (a held mute hotkey used to flap on and off).
+#[cfg(windows)]
 const MOD_NOREPEAT: u32 = 0x4000;
 
 /// Bit `action.id() - 1`, the per-action slot in the registration/pending masks.
@@ -39,6 +40,7 @@ const fn bit(action: HotkeyAction) -> u32 {
 
 /// Action ids currently registered on the pumping thread (survives until
 /// [`unregister_all`], which is what actually releases them).
+#[cfg(windows)]
 static REGISTERED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Action ids whose `WM_HOTKEY` is waiting for the app loop (bitmask, so two

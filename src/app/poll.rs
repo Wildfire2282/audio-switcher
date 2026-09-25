@@ -3,7 +3,10 @@
 //!
 //! `run` (in `app`) calls these in a fixed order, and that order is policy: the
 //! click pump must run before the tray pump so a middle-click clears the stale
-//! overlay before its own feedback appears.
+//! overlay before its own feedback appears, and the resync pumps must run
+//! before the action pumps so no action steps from a mirror the endpoint has
+//! already left behind (a default-device switch arrives as a notification, not
+//! as a call `App` can see).
 
 use std::time::{Duration, Instant};
 
@@ -126,6 +129,11 @@ impl<B: AudioBackend> App<B> {
     pub(super) fn poll_devices(&mut self) {
         if self.backend.poll_device_changed() {
             self.devices_pending = true;
+            // The mirror follows the endpoint before any action pump can write
+            // through it: a notch stepped from the previous device's volume
+            // would overwrite the new device's state. Only the menu rebuild
+            // waits for the coalesce window below.
+            self.resync_volume_state();
         }
         // coalesce bursts: IMMNotificationClient may fire Added/Removed/DefaultChanged in quick succession.
         // The notification stays latched in `devices_pending` so the deferred

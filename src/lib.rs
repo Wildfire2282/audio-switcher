@@ -10,15 +10,17 @@
 //! - `ui` — tray UI
 //! - `app` — runtime
 //!
-//! `platform` owns every Win32 call, `ui` turns state into text and colour,
-//! `app` owns loop policy, and `platform` never invents UI text a caller did not
-//! hand it. `tests/architecture.rs` enforces that instead of trusting a reader.
+//! `platform` and `audio::wasapi` own every Win32 call, `ui` turns state into
+//! text and colour, `app` owns loop policy, and `platform` never invents UI
+//! text a caller did not hand it. `tests/architecture.rs` enforces that instead
+//! of trusting a reader.
 //!
 //! # Where to look
 //!
 //! Task → the files that decide it; everything else is context you can skip.
-//! Unit tests live in a sibling `tests.rs` next to the module they test, so a
-//! production read never drags them along.
+//! Unit tests live in a sibling `tests.rs` next to the module they test (an
+//! inline `mod tests` is capped at 50 lines), so a production read never drags
+//! them along.
 //! - wheel volume, hover gate, click dismissal → `platform::mouse_hook`,
 //!   `app::poll::{poll_wheel, poll_click}`, `app::action::show_osd`
 //! - the runtime: `App` state and the loop → `app` (`mod.rs`), per-frame pumps
@@ -26,7 +28,8 @@
 //! - overlay: does it appear, where → `platform::osd`; what it looks like →
 //!   `platform::osd::win::{draw, layout}`, `ui::osd`, `platform::theme`
 //! - tray icon, context menu, menu ids → `ui::tray`, `ui::menu`, `app::handler`
-//! - audio IO: devices, volume, COM callbacks → `audio::wasapi::{notify, policy}`
+//! - audio IO: devices, volume, COM callbacks →
+//!   `audio::wasapi::{default_device, notify}`
 //! - config fields, migration, paths → `config`
 //! - global hotkeys → `platform::hotkey`
 //! - autostart (off / current-user `Run` value / elevated logon task),
@@ -138,6 +141,15 @@ pub fn display_name_for(kebab: &str) -> String {
         })
         .collect()
 }
+
+/// Serialises the `#[ignore]` integration suite: those tests mutate
+/// machine-global state (default devices, the master volume, HKCU, scheduled
+/// tasks, real windows) and drive COM stacks this crate documents as
+/// single-threaded, so two at once is unsound — parallel runs have died inside
+/// MMDevApi and lost windows to each other's timing. The guard is taken first
+/// and dropped last, so it holds through each test's teardown.
+#[cfg(test)]
+pub(crate) static INTEGRATION_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests {

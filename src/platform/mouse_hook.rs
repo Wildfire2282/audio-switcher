@@ -29,6 +29,7 @@ pub(crate) struct WheelEvent {
 ///
 /// Coordinates are signed: a monitor left of or above the primary screen has
 /// negative ones.
+#[cfg(any(windows, test))]
 #[must_use]
 #[allow(clippy::cast_sign_loss)]
 fn pack_point(x: i32, y: i32) -> i64 {
@@ -228,6 +229,7 @@ pub(crate) fn take_click() -> bool {
 }
 
 /// Whether the UTF-16 window class `class_name` matches a known taskbar or tray window.
+#[cfg(any(windows, test))]
 fn is_tray_class_name(class_name: &[u16]) -> bool {
     const TRAY_CLASSES: &[&str] = &[
         "Shell_TrayWnd",
