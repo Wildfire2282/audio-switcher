@@ -4,7 +4,8 @@
 //! an agent changing this module reads the module, and one changing the
 //! behaviour reads this file. `use super::*` still reaches every private item.
 
-use super::{LOG_RETENTION, failure_note, prune_old_logs};
+use super::{LOG_RETENTION, failure_note, open_log_file, prune_old_logs};
+use std::io::Write;
 use std::time::{Duration, SystemTime};
 
 /// A crash next to a log file that was never written is the one report a user
@@ -66,4 +67,20 @@ fn a_prune_leaves_other_files_alone() {
 
     assert!(foreign.exists(), "another tool's log was deleted");
     assert!(not_a_log.exists(), "a file that is not a log was deleted");
+}
+
+#[test]
+fn log_file_opens_in_append_mode_preserving_prior_content() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("test.log");
+    {
+        let mut first = open_log_file(&path).expect("open first");
+        first.write_all(b"run 1\n").expect("write first");
+    }
+    {
+        let mut second = open_log_file(&path).expect("open second");
+        second.write_all(b"run 2\n").expect("write second");
+    }
+    let contents = std::fs::read_to_string(&path).expect("read log");
+    assert_eq!(contents, "run 1\nrun 2\n");
 }

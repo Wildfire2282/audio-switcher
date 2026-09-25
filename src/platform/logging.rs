@@ -88,10 +88,10 @@ fn prune_old_logs(dir: &std::path::Path, now: std::time::SystemTime) {
 pub fn init() {
     let log_path = log_file_path();
     if let Some(parent) = log_path.parent() {
-        // Best effort: the `File::create` below is what reports a real failure.
+        // Best effort: `open_log_file` below is what reports a real failure.
         let _ = std::fs::create_dir_all(parent);
     }
-    match std::fs::File::create(&log_path) {
+    match open_log_file(&log_path) {
         Ok(file) => {
             // File sink only: `windows_subsystem = "windows"` detaches stdio, so
             // a console layer would be invisible; the file is the record.
@@ -129,6 +129,14 @@ fn log_file_path() -> std::path::PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() / 86_400);
     log_dir().join(format!("{}-{days}.log", crate::TOOL_ID))
+}
+
+/// Open or create the daily log file in append mode so restarts preserve diagnostics.
+fn open_log_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
 }
 
 fn log_dir() -> std::path::PathBuf {
