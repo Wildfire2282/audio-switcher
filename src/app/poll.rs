@@ -102,22 +102,25 @@ impl<B: AudioBackend> App<B> {
         }
     }
     pub(super) fn poll_wheel(&mut self) {
-        let (pending, delta) = mouse_hook::take_wheel_event();
-        if !pending || delta == 0 {
+        let Some(event) = mouse_hook::take_wheel_event() else {
+            return;
+        };
+        if event.delta == 0 {
             return;
         }
-        let now = Instant::now();
         #[cfg(windows)]
         {
-            // EarTrumpet-style hover gate: the cursor must be over the icon
-            // at event time. Fail closed when the rect is unavailable, so
-            // scrolling elsewhere never changes the volume.
-            if !mouse_hook::cursor_over_tray(&self.tray).unwrap_or(false) {
+            // EarTrumpet-style hover gate: the cursor must have been over the
+            // icon when the notch was made, which is why the gate judges the
+            // position the event carried rather than the one the poll sees.
+            // Fail closed when the rect is unavailable, so scrolling elsewhere
+            // never changes the volume.
+            if !mouse_hook::cursor_over_tray(&self.tray, event.at).unwrap_or(false) {
                 return;
             }
         }
-        let step = self.wheel.push(now, delta);
-        let total = WheelState::total_step(delta, step);
+        let step = self.wheel.push(Instant::now(), event.delta);
+        let total = WheelState::total_step(event.delta, step);
         self.nudge_volume(total);
     }
     pub(super) fn poll_devices(&mut self) {

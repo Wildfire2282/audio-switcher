@@ -69,6 +69,19 @@ fn hover_leave_resets_wheel_acceleration() {
     assert_eq!(wheel.push(later, 120), 1);
 }
 
+/// Scrolling back is a new burst: one notch down after a fast burst upwards
+/// steps 1%, so a correction does not overshoot by the accelerated amount.
+#[test]
+fn wheel_reversal_starts_a_fresh_burst() {
+    let mut wheel = WheelState::new();
+    let base = Instant::now();
+    assert_eq!(wheel.push(base, 120), 1);
+    assert_eq!(wheel.push(base + Duration::from_millis(50), 120), 5);
+    assert_eq!(wheel.push(base + Duration::from_millis(60), -120), 1);
+    // The new direction accelerates on its own history, not the old burst's.
+    assert_eq!(wheel.push(base + Duration::from_millis(70), -120), 5);
+}
+
 #[test]
 fn total_step_sign_and_scaling() {
     // Single tick keeps sign with per-tick step.
@@ -80,4 +93,6 @@ fn total_step_sign_and_scaling() {
     // Multi-tick scales linearly with sign.
     assert_eq!(WheelState::total_step(240, 2), 4);
     assert_eq!(WheelState::total_step(-240, 5), -10);
+    // An empty accumulator is not a notch in the +1 direction.
+    assert_eq!(WheelState::total_step(0, 5), 0);
 }

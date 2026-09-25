@@ -9,6 +9,9 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Default)]
 pub struct WheelState {
     history: VecDeque<Instant>,
+    /// Sign of the last notch: a reversal starts a fresh burst instead of
+    /// inheriting the previous gesture's step.
+    last_direction: i32,
 }
 
 impl WheelState {
@@ -16,6 +19,7 @@ impl WheelState {
     pub fn new() -> Self {
         Self {
             history: VecDeque::new(),
+            last_direction: 0,
         }
     }
 
@@ -24,6 +28,16 @@ impl WheelState {
     /// Acceleration is always on: fast scrolling yields larger steps.
     #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
     pub fn push(&mut self, now: Instant, delta: i32) -> u32 {
+        // Reversing direction ends the previous burst: the window measures how
+        // fast the user is scrolling, and carrying it across a reversal applies
+        // an accelerated step the other way on the first notch back.
+        let direction = delta.signum();
+        if direction != 0 && self.last_direction != 0 && direction != self.last_direction {
+            self.history.clear();
+        }
+        if direction != 0 {
+            self.last_direction = direction;
+        }
         // Handle i32::MIN without panic; saturate to MAX magnitude.
         let abs = delta.checked_abs().unwrap_or(i32::MAX) as u32;
         let ticks = usize::try_from((abs / 120).max(1)).unwrap_or(1);
@@ -54,10 +68,15 @@ impl WheelState {
     /// `unsigned_abs` keeps `i32::MIN` representable and the `i64` product
     /// cannot overflow (`u32 × i32` always fits); the result clamps to the
     /// `i32` range so a huge public `step_per_tick` saturates instead of
-    /// wrapping the wheel the wrong way. A sub-notch tick still steps once.
+    /// wrapping the wheel the wrong way. A sub-notch tick still steps once, but
+    /// no delta at all steps nothing: a caller that passes a drained-down-to-zero
+    /// accumulator must not get a phantom notch in the positive direction.
     #[must_use]
     pub fn total_step(delta: i32, step_per_tick: u32) -> i32 {
-        let sign: i64 = if delta >= 0 { 1 } else { -1 };
+        if delta == 0 {
+            return 0;
+        }
+        let sign: i64 = if delta > 0 { 1 } else { -1 };
         let step = i64::from(i32::try_from(step_per_tick).unwrap_or(1));
         let ticks = i64::from(delta.unsigned_abs() / 120);
         let magnitude = if ticks == 0 {
@@ -71,6 +90,7 @@ impl WheelState {
     /// Clear history (e.g. on hover leave).
     pub fn clear(&mut self) {
         self.history.clear();
+        self.last_direction = 0;
     }
 }
 

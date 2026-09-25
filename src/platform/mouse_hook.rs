@@ -2,12 +2,45 @@
 //! removed on drop, and reporting wheel and button events to the main loop
 //! through global atomics.
 
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
 
 /// Accumulated wheel delta (WHEEL_DELTA is signed 120-per-notch).
 static WHEEL_DELTA: AtomicI32 = AtomicI32::new(0);
 /// Whether a wheel event is pending consumption.
 static WHEEL_PENDING: AtomicBool = AtomicBool::new(false);
+/// Cursor position carried by the notches in `WHEEL_DELTA`, see [`pack_point`].
+///
+/// The position *of the event*, not of the poll: the loop can run a frame behind
+/// the gesture, and a gate that read the cursor position at poll time would
+/// judge a position the wheel never scrolled at — scrolling elsewhere and then
+/// moving onto the tray used to change the volume.
+static WHEEL_AT: AtomicI64 = AtomicI64::new(0);
+
+/// One drained wheel event: the accumulated delta and where it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WheelEvent {
+    /// Accumulated `WHEEL_DELTA` units, sign included.
+    pub delta: i32,
+    /// Cursor position reported with the (last) notch.
+    pub at: (i32, i32),
+}
+
+/// Pack a screen position into one atomic word (x high, y low).
+///
+/// Coordinates are signed: a monitor left of or above the primary screen has
+/// negative ones.
+#[must_use]
+#[allow(clippy::cast_sign_loss)]
+fn pack_point(x: i32, y: i32) -> i64 {
+    (i64::from(x) << 32) | i64::from(y as u32)
+}
+
+/// Inverse of [`pack_point`]; both halves sign-extend.
+#[must_use]
+fn unpack_point(raw: i64) -> (i32, i32) {
+    ((raw >> 32) as i32, raw as i32)
+}
+
 /// Whether a mouse button went down since the last poll.
 #[cfg(windows)]
 static CLICKED: AtomicBool = AtomicBool::new(false);
@@ -80,6 +113,7 @@ unsafe extern "system" fn hook_proc(
                 #[allow(clippy::cast_possible_wrap, clippy::cast_lossless)]
                 let delta = (info.mouseData >> 16) as u16 as i16 as i32;
                 // Release ordering pairs with Acquire in the consumer (take_wheel_event).
+                WHEEL_AT.store(pack_point(info.pt.x, info.pt.y), Ordering::Release);
                 WHEEL_DELTA.fetch_add(delta, Ordering::AcqRel);
                 WHEEL_PENDING.store(true, Ordering::Release);
             }
@@ -163,15 +197,21 @@ impl Drop for WheelHook {
 
 // ---- stateless helpers for App ----
 
-/// Atomically take the pending wheel event: `(had_event, accumulated_delta)`.
+/// Atomically take the pending wheel event, `None` when nothing arrived.
 ///
 /// Merges the old `take_pending` + `take_delta` pair so callers cannot observe
 /// a torn state (pending cleared but delta left behind, or vice versa).
-pub(crate) fn take_wheel_event() -> (bool, i32) {
+pub(crate) fn take_wheel_event() -> Option<WheelEvent> {
     let delta = WHEEL_DELTA.swap(0, Ordering::AcqRel);
     let pending = WHEEL_PENDING.swap(false, Ordering::AcqRel);
-    // A nonzero delta implies an event even if the flag raced; treat either as pending.
-    (pending || delta != 0, delta)
+    // A nonzero delta implies an event even if the flag raced; treat either as one.
+    if !pending && delta == 0 {
+        return None;
+    }
+    Some(WheelEvent {
+        delta,
+        at: unpack_point(WHEEL_AT.load(Ordering::Acquire)),
+    })
 }
 
 /// Atomically take the pending click flag: did a mouse button go down?
@@ -187,33 +227,85 @@ pub(crate) fn take_click() -> bool {
     false
 }
 
-/// Whether the cursor is over the tray icon's rect (with padding).
+/// Whether the UTF-16 window class `class_name` matches a known taskbar or tray window.
+fn is_tray_class_name(class_name: &[u16]) -> bool {
+    const TRAY_CLASSES: &[&str] = &[
+        "Shell_TrayWnd",
+        "Shell_SecondaryTrayWnd",
+        "NotifyIconOverflowWindow",
+        "TopLevelWindowForOverflowXamlIsland",
+        "TrayNotifyWnd",
+        "AudioSwitcherVolumeOsd",
+    ];
+
+    TRAY_CLASSES
+        .iter()
+        .any(|target| target.encode_utf16().eq(class_name.iter().copied()))
+}
+
+#[cfg(windows)]
+fn is_tray_class(hwnd: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+
+    let mut buf = [0u16; 64];
+    // SAFETY: `buf` is a live stack buffer and its capacity is passed correctly;
+    // `hwnd` is only queried by `GetClassNameW`.
+    let len = unsafe { GetClassNameW(hwnd, &mut buf) };
+    if len == 0 {
+        return false;
+    }
+    let len = usize::try_from(len).unwrap_or(0).min(buf.len());
+    is_tray_class_name(&buf[..len])
+}
+
+#[cfg(windows)]
+fn is_tray_or_taskbar_at(pt: windows::Win32::Foundation::POINT) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GA_ROOT, GetAncestor, WindowFromPoint};
+
+    // SAFETY: `WindowFromPoint` takes `POINT` by value and returns the topmost
+    // window containing the point (or null).
+    let hwnd = unsafe { WindowFromPoint(pt) };
+    if hwnd.0.is_null() {
+        return false;
+    }
+    // SAFETY: `GetAncestor` safely traverses the window parent hierarchy
+    // starting from `hwnd` and returns the root window.
+    let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
+    is_tray_class(hwnd) || (!root.0.is_null() && is_tray_class(root))
+}
+
+/// Whether `at` is over the tray icon's rect (with padding) and the window
+/// there belongs to the taskbar/tray area.
+///
+/// `at` is the position the wheel event carried ([`WheelEvent::at`]), not the
+/// current cursor position: the gate answers "was the gesture over the icon",
+/// and the cursor can move between the notch and the poll.
 ///
 /// Returns `None` when the tray rect is unavailable.
 #[cfg(windows)]
-pub(crate) fn cursor_over_tray(wrapper: &crate::ui::tray::TrayWrapper) -> Option<bool> {
-    // SAFETY: GetCursorPos writes to POINT out-param; rect() is tray-icon API.
-    unsafe {
-        use windows::Win32::Foundation::POINT;
-        use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-        let mut pt = POINT { x: 0, y: 0 };
-        if let Err(e) = GetCursorPos(&mut pt) {
-            // Fail closed: without a position the gate cannot say "over the
-            // icon", and a wrong "yes" would let any scroll change the volume.
-            tracing::debug!("cursor_over_tray: GetCursorPos failed: {e:?}");
-            return Some(false);
-        }
-        let (rx, ry, rw, rh) = wrapper.icon_rect()?;
-        // Keep tolerance minimal (DPI rounding only). A large pad plus the
-        // old grace window caused volume changes when the cursor had already
-        // left the icon / was over a neighboring tray icon.
-        const PAD: i32 = 2;
-        Some(pt.x >= rx - PAD && pt.x < rx + rw + PAD && pt.y >= ry - PAD && pt.y < ry + rh + PAD)
+pub(crate) fn cursor_over_tray(
+    wrapper: &crate::ui::tray::TrayWrapper,
+    at: (i32, i32),
+) -> Option<bool> {
+    let (rx, ry, rw, rh) = wrapper.icon_rect()?;
+    // Keep tolerance minimal (DPI rounding only). A large pad plus the
+    // old grace window caused volume changes when the cursor had already
+    // left the icon / was over a neighboring tray icon.
+    const PAD: i32 = 2;
+    if !(at.0 >= rx - PAD && at.0 < rx + rw + PAD && at.1 >= ry - PAD && at.1 < ry + rh + PAD) {
+        return Some(false);
     }
+    Some(is_tray_or_taskbar_at(windows::Win32::Foundation::POINT {
+        x: at.0,
+        y: at.1,
+    }))
 }
 
 #[cfg(not(windows))]
-pub(crate) fn cursor_over_tray(_wrapper: &crate::ui::tray::TrayWrapper) -> Option<bool> {
+pub(crate) fn cursor_over_tray(
+    _wrapper: &crate::ui::tray::TrayWrapper,
+    _at: (i32, i32),
+) -> Option<bool> {
     Some(false)
 }
 
@@ -222,3 +314,9 @@ mod click_tests;
 
 #[cfg(all(test, windows))]
 mod wake_latency_tests;
+
+#[cfg(test)]
+mod tray_window_tests;
+
+#[cfg(test)]
+mod wheel_tests;
