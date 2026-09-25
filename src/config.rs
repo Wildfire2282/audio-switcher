@@ -600,7 +600,16 @@ impl AppConfig {
             let suffix = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             path.with_file_name(format!("{file_name}.tmp.{}-{suffix}", unique_token()))
         };
-        std::fs::write(&tmp_path, body.as_bytes())?;
+        // Flushed before the rename: the rename is atomic for readers, but on
+        // its own it can land with the new name and old or empty contents after
+        // a power loss — the one way a settings file loses everything. Small
+        // and rare (user actions only), so the fsync is worth it here.
+        {
+            use std::io::Write as _;
+            let mut file = std::fs::File::create(&tmp_path)?;
+            file.write_all(body.as_bytes())?;
+            file.sync_all()?;
+        }
         // On Windows rename uses MoveFileExW(REPLACE_EXISTING) and atomically replaces.
         if let Err(e) = std::fs::rename(&tmp_path, path) {
             let _ = std::fs::remove_file(&tmp_path);
