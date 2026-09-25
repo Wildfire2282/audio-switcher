@@ -22,9 +22,10 @@ type SetDefaultEndpointFn =
 /// a single terminator) and a valid `ERole` value for `role`, with COM
 /// initialized on this thread. Offsets are probed per candidate: only the
 /// primary offset with `S_OK` counts, so a mis-probe surfaces as an error
-/// (or a no-op visibility call on the Vista path, which is rejected by the
-/// primary-offset discipline), never as an out-of-bounds vtable read — every
-/// slot read below is null-checked first.
+/// never as an out-of-bounds vtable read, and never as a call into a method
+/// the object was not asked for: every slot read below is null-checked first,
+/// and a candidate whose IID `QueryInterface` refuses is skipped rather than
+/// called blind.
 #[cfg(windows)]
 pub(super) unsafe fn set_default_endpoint_raw(
     device_id: &str,
@@ -95,6 +96,10 @@ pub(super) unsafe fn set_default_endpoint_raw(
             // SAFETY: `qi` is the object's own QueryInterface; `iid` borrows a
             // live GUID and `iface` is a valid out-pointer.
             let hr_qi = unsafe { qi(raw_unk, std::ptr::from_ref(&iid), &mut iface) };
+            if hr_qi.is_err() {
+                // Recorded so the error the caller finally sees names this cause.
+                last_err = Some(windows::core::Error::from(hr_qi));
+            }
             if hr_qi.is_ok() && !iface.is_null() {
                 // SAFETY: `iface` came from a successful QI; its vtable read is
                 // null-checked before the primary-offset slot is touched.
@@ -126,25 +131,14 @@ pub(super) unsafe fn set_default_endpoint_raw(
                 // yields a vtable, and without one `Release` cannot be reached.
             }
         }
-        // 2) QI unsupported here: call the primary offset on the raw IUnknown
-        //    pointer (concrete classes usually implement the interface, so the raw call works).
-        // SAFETY: re-read of the checked object pointer; null-checked below.
-        let vtbl = unsafe { *(raw_unk as *mut *mut *mut std::ffi::c_void) };
-        if vtbl.is_null() {
-            last_err = Some(windows::core::Error::from_hresult(windows::core::HRESULT(
-                0x8000_4005_u32 as i32,
-            )));
-            continue;
-        }
-        // SAFETY: same primary-offset discipline as path 1; a mismatch fails
-        // the HRESULT check below and is never treated as success.
-        let func: SetDefaultEndpointFn = unsafe { std::mem::transmute(*vtbl.add(primary_off)) };
-        // SAFETY: `raw_unk` is the live CoCreateInstance object; `wide` outlives the call.
-        let hr = unsafe { func(raw_unk, PCWSTR(wide.as_ptr()), role) };
-        if hr.is_ok() {
-            return Ok(());
-        }
-        last_err = Some(windows::core::Error::from(hr));
+        // No fallback through the bare `IUnknown`: the slot only *is*
+        // `SetDefaultEndpoint` for the interface the QI asked for, and calling
+        // it without that interface means guessing a signature the object never
+        // declared. The Vista layout keeps a signature-compatible
+        // `SetEndpointVisibility` in the same slot, so such a call can answer
+        // S_OK while switching nothing, and a class implementing neither layout
+        // would be called with arguments it does not take. A refused QI is
+        // reported instead, and the next candidate is tried.
     }
     Err(
         last_err.unwrap_or(windows::core::Error::from_hresult(windows::core::HRESULT(

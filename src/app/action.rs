@@ -239,13 +239,18 @@ impl<B: AudioBackend> App<B> {
             return;
         }
         self.cached_mute = target;
-        // The mute click keeps its side effect of applying the volume limit. The
-        // mirror is clamped with it, because the feedback and the next step both
-        // read the mirror rather than the endpoint.
-        if let Err(e) = self.backend.clamp_volume_if_needed(&self.cfg) {
-            tracing::warn!("volume clamp failed: {e}");
+        // The mute click keeps its side effect of applying the volume limit,
+        // and the mirror is clamped with it: the feedback and the next step both
+        // read the mirror rather than the endpoint. Only a clamp the endpoint
+        // accepted may move the mirror — a failed write leaves the endpoint
+        // loud, and mirroring it anyway would put the next step's origin below
+        // what is actually playing.
+        match self.backend.clamp_volume_if_needed(&self.cfg) {
+            Ok(()) => {
+                self.cached_volume = crate::config::clamp_volume(self.cached_volume, &self.cfg);
+            }
+            Err(e) => tracing::warn!("volume clamp failed: {e}"),
         }
-        self.cached_volume = crate::config::clamp_volume(self.cached_volume, &self.cfg);
         // Only the mute read-outs move: a full `refresh_ui` would re-read the
         // whole snapshot and walk the menu for one check mark.
         self.tray.sync_mute(target);

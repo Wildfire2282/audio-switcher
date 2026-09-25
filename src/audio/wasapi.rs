@@ -20,7 +20,7 @@ use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 #[cfg(windows)]
 use windows::Win32::Media::Audio::{
     DEVICE_STATE_ACTIVE, EDataFlow, IMMDevice, IMMDeviceCollection, IMMDeviceEnumerator,
-    MMDeviceEnumerator, eCapture, eMultimedia, eRender,
+    MMDeviceEnumerator, eCapture, eCommunications, eConsole, eMultimedia, eRender,
 };
 #[cfg(windows)]
 use windows::Win32::System::Com::StructuredStorage::PropVariantClear;
@@ -63,22 +63,30 @@ impl WasapiBackend {
             input_cache_time: None,
             cached_enumerator: None,
         };
-        // register once per process
+        // Register once per process; an attempt that failed is retried by the
+        // next construction instead of latching "done" over a lost registration.
         static REGISTERED: AtomicBool = AtomicBool::new(false);
-        if !REGISTERED.swap(true, AtomicOrdering::AcqRel) {
-            register_notification_client();
-            spawn_volume_notify_worker();
+        if !REGISTERED.load(AtomicOrdering::Acquire) && register_notification_client() {
+            REGISTERED.store(true, AtomicOrdering::Release);
         }
+        spawn_volume_notify_worker();
         s
     }
 
-    /// Invalidate the device enumeration caches (render and capture).
+    /// Invalidate every cached audio-service object: the device lists and the
+    /// enumerator itself.
+    ///
+    /// The enumerator goes too because a stale one cannot be recovered from: the
+    /// proxy belongs to the `audiosrv` instance that created it, so after that
+    /// service restarts (sleep/resume, a crash, a driver update) every call
+    /// through it fails until the process ends — a clear that kept it left the
+    /// menu's "Refresh" unable to fix anything.
     pub fn clear_cache(&mut self) {
         self.cached = None;
         self.cache_time = None;
         self.input_cached = None;
         self.input_cache_time = None;
-        // The enumerator stays valid; only the device-list caches expire.
+        self.cached_enumerator = None;
     }
 
     /// Get or create the cached IMMDeviceEnumerator (fewer CoCreateInstance calls).
@@ -277,25 +285,38 @@ impl WasapiBackend {
 
     /// Shared validation + `IPolicyConfig` switch for both flows; roles are
     /// orthogonal to direction, so capture reuses the render role sequence.
+    ///
+    /// Every role the shell's own "Set Default" writes is attempted, and the
+    /// switch counts as done when any of them took. An application picks the
+    /// endpoint for the role *it* renders in — `eConsole` for most, `eMultimedia`
+    /// for some media apps, `eCommunications` for calls — so requiring one
+    /// particular role either reports a switch the user can hear as failed, or
+    /// reports success while their apps keep playing on the old device.
     fn set_default_inner(&mut self, id: &str) -> Result<(), AudioError> {
         if id.is_empty() || id.contains('\0') {
             return Err(AudioError::Failed("invalid device id".into()));
         }
-        // SAFETY: `set_default_endpoint_raw` requires a NUL-free id, a valid
-        // role and COM initialized on this thread; the check above rejects the
-        // ids that would break its UTF-16 encoding, and every role passed below
-        // comes from `ERole`.
-        unsafe {
-            // Primary role: eMultimedia (1), must succeed.
-            set_default_endpoint_raw(id, eMultimedia.0)
-                .map_err(|e| AudioError::Failed(e.to_string()))?;
-            // Secondary roles: best-effort but log failures (do not hide).
-            for role in [0i32, 2i32] {
-                if let Err(e) = set_default_endpoint_raw(id, role) {
+        let mut applied = 0u32;
+        let mut first_error = None;
+        for role in [eConsole.0, eMultimedia.0, eCommunications.0] {
+            // SAFETY: `set_default_endpoint_raw` requires a NUL-free id, a valid
+            // role and COM initialized on this thread; the check above rejects
+            // the ids that would break its UTF-16 encoding, and every role here
+            // comes from `ERole`.
+            match unsafe { set_default_endpoint_raw(id, role) } {
+                Ok(()) => applied += 1,
+                Err(e) => {
                     // 0x80070490 = not found, 0x80070057 = invalid arg — don't retry, just warn.
                     tracing::warn!("set_default role {role} failed: {e}");
+                    first_error.get_or_insert(e);
                 }
             }
+        }
+        if applied == 0 {
+            return Err(AudioError::Failed(first_error.map_or_else(
+                || "no role accepted the switch".into(),
+                |e| e.to_string(),
+            )));
         }
         self.clear_cache();
         Ok(())

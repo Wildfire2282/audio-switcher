@@ -242,9 +242,10 @@ static VOLUME_REREGISTER: AtomicBool = AtomicBool::new(false);
 
 /// Wakes the re-registration worker instead of it polling once a second.
 ///
-/// `notify_one` without the lock may be missed by a worker that is not waiting
-/// yet; the wait's own timeout is what makes that harmless, which is why the
-/// flag above (not this signal) carries the request.
+/// The signal is raised while holding this mutex, and the worker's wait
+/// re-reads [`VOLUME_REREGISTER`] under the same mutex: a signal sent outside
+/// the lock can land between the worker's flag check and its wait, which would
+/// leave the stale registration in place until the wait timed out.
 #[cfg(windows)]
 static REREG_CV: std::sync::LazyLock<(Mutex<()>, std::sync::Condvar)> =
     std::sync::LazyLock::new(|| (Mutex::new(()), std::sync::Condvar::new()));
@@ -322,11 +323,13 @@ pub(super) fn spawn_volume_notify_worker() {
             let mut current: Option<(String, IAudioEndpointVolume)> = None;
             loop {
                 // Register when nothing is live, or when the default endpoint
-                // changed. `current.is_none()` short-circuits so a pending request
-                // survives to the pass that succeeds.
-                let live = if current.is_none()
-                    || VOLUME_REREGISTER.swap(false, AtomicOrdering::AcqRel)
-                {
+                // changed. The request is consumed unconditionally: it is the
+                // only signal while a registration is live, and while one is
+                // missing the pass retries anyway — but a flag left set would
+                // make the wait below return at once and turn that retry into a
+                // spin.
+                let requested = VOLUME_REREGISTER.swap(false, AtomicOrdering::AcqRel);
+                let live = if current.is_none() || requested {
                     // Drop the old instance first — its registration dies with it,
                     // and the new registration must not be made while it is live.
                     drop(current.take());
@@ -357,8 +360,10 @@ pub(super) fn spawn_volume_notify_worker() {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 drop(
-                    cv.wait_timeout(guard, wait)
-                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                    cv.wait_timeout_while(guard, wait, |()| {
+                        !VOLUME_REREGISTER.load(AtomicOrdering::Acquire)
+                    })
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
                 );
             }
         });
@@ -466,8 +471,14 @@ unsafe extern "system" fn device_on_default_changed(
     // and re-register on the new default endpoint. Never block the COM
     // callback thread: the id is informational only, so a contended
     // lock is simply skipped — the worker clears/sets it itself.
-    VOLUME_REREGISTER.store(true, AtomicOrdering::Release);
-    REREG_CV.1.notify_one();
+    {
+        let _guard = REREG_CV
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        VOLUME_REREGISTER.store(true, AtomicOrdering::Release);
+        REREG_CV.1.notify_one();
+    }
     if let Ok(mut id) = VOLUME_NOTIFY_ID.try_lock() {
         *id = None;
     }
@@ -513,13 +524,26 @@ fn create_device_notifier() -> windows::Win32::Media::Audio::IMMNotificationClie
 }
 
 #[cfg(windows)]
-/// Holder for the COM notification client kept for process lifetime.
-/// The manual object is stateless and only touches `DEVICE_CHANGED` atomics,
-/// so it is effectively `Send`/`Sync` even though COM STA objects are
-/// normally thread-affine. We only create/register on the main STA thread,
-/// and `OnceLock` only extends lifetime — no cross-thread COM call is made
-/// through the holder.
-struct NotifierHolder(#[allow(dead_code)] IMMNotificationClient);
+/// The objects a device-change registration needs for the process lifetime: the
+/// enumerator the callback was registered through, and the client it arrives at.
+///
+/// The enumerator is held rather than dropped after registering: the contract is
+/// that the client calls `UnregisterEndpointNotificationCallback` before
+/// releasing it, and a registration whose enumerator is gone is not something
+/// the shell promises to keep delivering — a lost registration means the menu
+/// stops noticing device changes.
+///
+/// The manual client object is stateless and only touches `DEVICE_CHANGED`
+/// atomics, so it is effectively `Send`/`Sync` even though COM STA objects are
+/// normally thread-affine. Creation and registration happen on the main STA
+/// thread, and `OnceLock` only extends lifetime — no cross-thread COM call is
+/// made through the holder.
+struct NotifierHolder {
+    #[allow(dead_code)]
+    enumerator: IMMDeviceEnumerator,
+    #[allow(dead_code)]
+    notifier: IMMNotificationClient,
+}
 #[cfg(windows)]
 // SAFETY: the manual object only flips atomics; its methods are stateless
 // and thread-safe. Register is called once on the main STA thread; holding
@@ -532,18 +556,30 @@ unsafe impl Sync for NotifierHolder {}
 static NOTIFIER_HOLDER: std::sync::OnceLock<NotifierHolder> = std::sync::OnceLock::new();
 
 #[cfg(windows)]
-pub(super) fn register_notification_client() {
+pub(super) fn register_notification_client() -> bool {
     if NOTIFIER_HOLDER.get().is_some() {
-        return;
+        return true;
     }
     unsafe {
-        // SAFETY: CoCreateInstance and RegisterEndpointNotificationCallback are valid on initialized STA thread; NOTIFIER_HOLDER ensures lifetime
-        if let Ok(enumerator) =
+        // SAFETY: CoCreateInstance and RegisterEndpointNotificationCallback are
+        // valid on an initialized STA thread.
+        let Ok(enumerator) =
             CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)
-        {
-            let notifier: IMMNotificationClient = create_device_notifier();
-            let _ = enumerator.RegisterEndpointNotificationCallback(&notifier);
-            let _ = NOTIFIER_HOLDER.set(NotifierHolder(notifier));
+        else {
+            tracing::warn!("device notifier: CoCreateInstance failed; device changes unseen");
+            return false;
+        };
+        let notifier: IMMNotificationClient = create_device_notifier();
+        // A registration that never took is otherwise silent: the menu stops
+        // noticing device changes with nothing left to read.
+        if let Err(e) = enumerator.RegisterEndpointNotificationCallback(&notifier) {
+            tracing::warn!("device notifier: registration failed: {e}");
+            return false;
         }
+        let _ = NOTIFIER_HOLDER.set(NotifierHolder {
+            enumerator,
+            notifier,
+        });
     }
+    true
 }
