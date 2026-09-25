@@ -12,8 +12,8 @@
 /.opencode/
 /.tmp/
 
-# Project-scoped agent skills (.agents/skills) — local only, not shared
-/.agents/
+# Project-scoped agent skills: `skills/<name>/SKILL.md`, tracked so every
+# checkout carries the same rules (see .agents/README.md)
 
 # IDE
 .vscode/
