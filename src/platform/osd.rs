@@ -97,6 +97,23 @@ mod win {
         (v * dpi + 48) / 96
     }
 
+    /// `v` rescaled from a `from`-DPI basis to `to` DPI, rounded away from zero.
+    ///
+    /// For values the *shell* sized: `SPI_GETNONCLIENTMETRICS` answers in
+    /// system-DPI units whatever monitor the card lands on, so a menu font read
+    /// from it has to be rescaled to that monitor.
+    fn rescale(v: i32, from: i32, to: i32) -> i32 {
+        if from == to || from <= 0 {
+            return v;
+        }
+        let half = from / 2;
+        if v >= 0 {
+            (v * to + half) / from
+        } else {
+            (v * to - half) / from
+        }
+    }
+
     /// The process module handle, needed to own the window class.
     fn instance() -> Option<HINSTANCE> {
         // SAFETY: `GetModuleHandleW(None)` requests the current module; it
@@ -200,11 +217,14 @@ mod win {
             // Belt and braces next to WS_EX_TRANSPARENT: a hit test over the
             // overlay must fall through to the tray icon underneath.
             WM_NCHITTEST => LRESULT(HTTRANSPARENT as isize),
-            // The shell repaints its menus when the theme, the accent or the
-            // system font changes; drop the cached appearance so the next paint
-            // re-reads it.
             WM_THEMECHANGED | WM_SETTINGCHANGE => {
                 draw::invalidate_appearance();
+                // A card already on screen keeps the old palette until it is
+                // asked to repaint, so the stale colours would otherwise stay
+                // up for the rest of the show window.
+                // SAFETY: `hwnd` is live; invalidating only schedules a
+                // `WM_PAINT`.
+                let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
                 LRESULT(0)
             }
             // SAFETY: default handling for every other message; always safe.

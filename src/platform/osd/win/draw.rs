@@ -151,8 +151,14 @@ fn card_font(dpi: i32) -> HFONT {
     // SAFETY: every `LOGFONTW` handed to GDI below is fully initialized.
     unsafe {
         match menu_font() {
-            // Already sized for the system DPI, so not scaled again.
-            Some(logfont) => CreateFontIndirectW(&raw const logfont),
+            // Answered in system-DPI units, so the height is rescaled for the
+            // monitor the card lands on: on a differently-scaled display the
+            // unscaled height is the wrong size next to a card whose geometry
+            // was scaled by this same `dpi`.
+            Some(mut logfont) => {
+                logfont.lfHeight = super::rescale(logfont.lfHeight, layout::screen_dpi(), dpi);
+                CreateFontIndirectW(&raw const logfont)
+            }
             // `SPI_GETNONCLIENTMETRICS` does not fail in a normal session. A
             // named face is a better guess than a zeroed `LOGFONTW`, and GDI
             // substitutes by family when the face is not installed.
@@ -469,8 +475,12 @@ pub(super) fn draw_card(hdc: HDC, content: &OsdContent, dpi: i32) {
                 let _ = RoundRect(buf.dc, 0, 0, w - 1, h - 1, radius, radius);
             }
 
-            // Slider track.
+            // Slider track. The stock null pen, not the DC's default: `Selected`
+            // restores whatever object it replaced on drop, so a block that
+            // selects only a brush strokes its rounded rect with the default
+            // black pen.
             {
+                let _pen = Selected::new(buf.dc, GetStockObject(NULL_PEN), false);
                 let _brush = Selected::new(buf.dc, HGDIOBJ(cache.track.0), false);
                 let _ = RoundRect(
                     buf.dc,
@@ -486,6 +496,7 @@ pub(super) fn draw_card(hdc: HDC, content: &OsdContent, dpi: i32) {
             // Filled portion and thumb, both in the accent (neutral while
             // muted).
             {
+                let _pen = Selected::new(buf.dc, GetStockObject(NULL_PEN), false);
                 let level = if content.muted {
                     cache.muted_fill
                 } else {

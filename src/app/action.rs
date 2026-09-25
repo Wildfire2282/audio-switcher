@@ -97,9 +97,13 @@ impl<B: AudioBackend> App<B> {
             self.ui_lang,
         );
         let anchor = self.tray.icon_rect();
-        if let Some(osd) = &mut self.osd {
-            osd.show(content, anchor);
-        }
+        // No overlay (window creation failed): no deadline either, so the flag
+        // that means "a card is on screen" stays honest and the click pump does
+        // not dismiss a card that never appeared.
+        let Some(osd) = &mut self.osd else {
+            return;
+        };
+        osd.show(content, anchor);
         self.osd_deadline = Some(Instant::now() + Duration::from_millis(VISIBLE_MS));
     }
 
