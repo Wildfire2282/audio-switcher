@@ -49,6 +49,15 @@
 //!   exactly where the overlay appears. See `platform::osd`.
 //! - The tray icon is never given a tooltip, and `TOOL_ID` is the single source
 //!   for the mutex name, the config/log directories, and the autostart name.
+//! - Hovering the tray icon can draw an empty tooltip frame (known, unfixed).
+//!   What draws it and why are inferred, not established: it appears where the
+//!   shell draws tips and our icon carries no tip text, but the shell's own
+//!   volume icon shows the same frame more often (4 of 8 hovers against our
+//!   1 of 8), which points away from anything we send. Left alone: suppressing
+//!   it means `NOTIFYICON_VERSION_4` without `NIF_SHOWTIP`, which needs a
+//!   subclass translating v4 callbacks, and the one cheap check that would say
+//!   whether that helps was never run. `TOOLTIP-INVESTIGATION.md` has the
+//!   evidence and the open questions.
 //! - `app::App`'s volume/mute/device mirror is authoritative for our own writes
 //!   and is resynced from the backend on every external change; a write that is
 //!   read back instead would put an endpoint round-trip on the wheel's hot path.
