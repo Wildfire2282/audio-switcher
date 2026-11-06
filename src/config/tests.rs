@@ -228,6 +228,23 @@ fn corrupted_fallback() {
 }
 
 #[test]
+fn an_unreadable_config_is_never_overwritten() {
+    // The read-error path returns defaults for this session, but a later menu
+    // action calls `save_to`: without the refusal that save would rename a
+    // defaults file over settings this session never saw.
+    let dir = tempdir().unwrap();
+    let path = AppConfig::config_path_for(dir.path());
+    std::fs::create_dir(&path).unwrap();
+    let cfg = AppConfig::load_from(&path);
+    assert_eq!(cfg.lang, Lang::System);
+    assert!(
+        cfg.save_to(&path).is_err(),
+        "a config that could not be read must not be replaced"
+    );
+    assert!(path.is_dir(), "the unreadable path must survive");
+}
+
+#[test]
 fn unknown_field_rejected_loudly() {
     // deny_unknown_fields: typos reset to defaults with a backup, never
     // silently ignored (replaces the old wheel_acceleration tolerance).
@@ -442,6 +459,15 @@ fn header_names_the_file_that_was_written() {
     let header = config_comment_header(Path::new(r"X:\y\config.json"));
     assert!(header.contains(r"X:\y\config.json"), "{header}");
     assert!(header.contains("Hotkeys / 快捷键"), "{header}");
+}
+
+#[test]
+fn a_utf8_bom_is_accepted_when_an_editor_adds_one() {
+    // Notepad saves UTF-8 with a BOM in some versions; without the strip the
+    // parse fails and the user's whole config is backed up and reset.
+    let (cfg, _dir) = load_raw("\u{feff}{\"lang\":\"en\"}");
+    assert_eq!(cfg.lang, Lang::En);
+    assert_eq!(cfg.version, CURRENT_VERSION);
 }
 
 #[test]

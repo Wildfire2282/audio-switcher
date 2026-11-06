@@ -34,6 +34,7 @@ static CONFIG_PATH_CACHE: LazyLock<(PathBuf, bool)> = LazyLock::new(resolve_conf
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum Lang {
     #[default]
     System,
@@ -99,10 +100,10 @@ where
     }
 }
 
-/// Global-hotkey opt-ins, one combination string per [`HotkeyAction`].
+/// Global-hotkey opt-ins, one combination string per hotkey action.
 ///
 /// Combinations are stored in canonical form (`"Ctrl+Alt+M"`) so `config.json`
-/// stays human-editable; `null`/absent means "no hotkey". [`AppConfig::migrate`]
+/// stays human-editable; `null`/absent means "no hotkey". Migration
 /// canonicalizes what it can read and drops an unparsable value with a warning
 /// (a bad combo never reaches `RegisterHotKey`).
 ///
@@ -216,6 +217,13 @@ pub struct AppConfig {
     /// One combination per action; all off unless set.
     #[serde(default)]
     pub hotkeys: Hotkeys,
+    /// Set when this session started from defaults because the file could not
+    /// be read. Saving would replace settings this session never saw, so
+    /// [`Self::save_to`] refuses instead of clobbering them.
+    ///
+    /// Crate-visible, not `pub`: it is session state, never a persisted field.
+    #[serde(skip)]
+    pub(crate) load_failed: bool,
 }
 
 fn default_version() -> u32 {
@@ -244,6 +252,7 @@ impl Default for AppConfig {
             autostart_mode: default_autostart_mode(),
             legacy_autostart: None,
             hotkeys: Hotkeys::default(),
+            load_failed: false,
         }
     }
 }
@@ -293,12 +302,16 @@ pub fn config_comment_header(path: &Path) -> String {
 
 /// Strip `//` line comments and `/* */` blocks outside strings (JSONC).
 ///
-/// `//` inside a string (e.g. a value) is preserved. Invalid UTF-8 is
-/// returned unchanged so the caller still fails loudly with backup+reset.
+/// `//` inside a string (e.g. a value) is preserved. A leading UTF-8 BOM is
+/// skipped: Notepad and other editors can save one, and serde would otherwise
+/// reject an otherwise valid hand-edited file. Invalid UTF-8 is returned
+/// unchanged so the caller still fails loudly with backup+reset.
 fn strip_json_comments(bytes: &[u8]) -> Vec<u8> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return bytes.to_vec();
     };
+    // An editor-added BOM is encoding noise, not a JSON token.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     let mut in_string = false;
@@ -507,9 +520,13 @@ impl AppConfig {
             Err(e) => {
                 // Transient IO error (e.g. permission) — don't clobber file, return in-memory default.
                 // Named, because otherwise the user's edits appear to be applied
-                // and are silently discarded at exit.
+                // and are silently discarded at exit. `load_failed` also stops a
+                // later menu action from renaming defaults over the unread file.
                 tracing::warn!("config read failed ({e}); using in-memory defaults");
-                Self::default()
+                Self {
+                    load_failed: true,
+                    ..Self::default()
+                }
             }
         }
     }
@@ -596,7 +613,8 @@ impl AppConfig {
     ///
     /// # Errors
     ///
-    /// Returns `io::Error` if directory creation, write, or rename fails.
+    /// Returns `io::Error` if the file was unreadable when this session
+    /// started, or if directory creation, write, or rename fails.
     ///
     /// # Panics
     ///
@@ -604,6 +622,11 @@ impl AppConfig {
     /// numbers and bools, so serializing a value built by this crate cannot
     /// fail; the panic marks that invariant rather than a user error.
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
+        if self.load_failed {
+            return Err(std::io::Error::other(
+                "config was unreadable at startup; refusing to overwrite it",
+            ));
+        }
         if Self::config_degraded() {
             tracing::warn!("saving to degraded temp config path");
         }
