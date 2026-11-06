@@ -43,8 +43,16 @@ mod steps;
 
 use setup::{apply_hotkeys, ensure_autostart};
 
-/// App owns all runtime state. Generic over [`AudioBackend`] for test injection.
+/// App owns all runtime state. Generic over the audio backend for test injection.
+// The bools are independent runtime flags (pending work, exit, audio state),
+// not a set of mutually exclusive modes.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent loop and audio flags, not a mode"
+)]
 pub struct App<B: AudioBackend = WasapiBackend> {
+    // The handle-bearing fields (tray, overlay, hook, COM) have no `Debug`, and
+    // printing them would say nothing a log reader can use.
     cfg: AppConfig,
     /// Effective UI language, resolved once at startup (`System` → locale).
     ui_lang: Lang,
@@ -65,6 +73,10 @@ pub struct App<B: AudioBackend = WasapiBackend> {
     /// endpoint back: one notch used to cost three `Activate` round-trips plus a
     /// property-store read purely to redraw feedback.
     cached_volume: u32,
+    /// Whether `cached_volume` came from a successful endpoint read. A failed
+    /// startup read seeds 50 to keep the UI usable; the first step must then
+    /// read the endpoint instead of stepping from that guess.
+    volume_known: bool,
     cached_mute: bool,
     cached_device: Option<AudioDevice>,
     /// Hide deadline for the volume overlay; `None` while nothing is shown.
@@ -75,12 +87,23 @@ pub struct App<B: AudioBackend = WasapiBackend> {
     _com: crate::platform::ComGuard,
 }
 
+impl<B: AudioBackend> std::fmt::Debug for App<B> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("App")
+            .field("ui_lang", &self.ui_lang)
+            .field("cached_volume", &self.cached_volume)
+            .field("cached_mute", &self.cached_mute)
+            .field("should_exit", &self.should_exit)
+            .finish_non_exhaustive()
+    }
+}
+
 impl App<WasapiBackend> {
     /// Create a new `App` with the real Windows audio backend.
     ///
     /// # Errors
     ///
-    /// Returns [`TrayError`] when the tray icon cannot be created, including
+    /// Returns the tray error when the tray icon cannot be created, including
     /// after the startup retries; see [`Self::with_backend`].
     #[must_use = "a failed construction must dialog and exit, never be ignored"]
     pub fn new(com: crate::platform::ComGuard) -> Result<Self, TrayError> {
@@ -93,7 +116,7 @@ impl<B: AudioBackend> App<B> {
     ///
     /// # Errors
     ///
-    /// Returns [`TrayError`] when the tray icon cannot be created.
+    /// Returns the tray error when the tray icon cannot be created.
     pub fn with_backend(com: crate::platform::ComGuard, backend: B) -> Result<Self, TrayError> {
         let cfg = AppConfig::load();
         Self::assemble(cfg, backend, com)
@@ -141,6 +164,7 @@ impl<B: AudioBackend> App<B> {
         let snap = backend.fetch_snapshot_clamped(&cfg);
         // Startup has no mirror to keep yet: seed the midpoint a failed first
         // read used to fabricate, and the first resync replaces it.
+        let volume_known = snap.volume.is_some();
         let cached_volume = snap.volume.unwrap_or(50);
         let cached_mute = snap.mute.unwrap_or(false);
         let default_id = snap.default_device.as_ref().map(|d| d.id.clone());
@@ -169,6 +193,7 @@ impl<B: AudioBackend> App<B> {
             hook_install_at: Instant::now() + Duration::from_millis(180),
             should_exit: false,
             cached_volume,
+            volume_known,
             cached_mute,
             cached_device: snap.default_device.clone(),
             osd_deadline: None,

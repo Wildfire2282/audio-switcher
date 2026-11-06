@@ -31,6 +31,7 @@ impl<B: AudioBackend> App<B> {
         // step's origin away from the endpoint.
         if let Some(volume) = snap.volume {
             self.cached_volume = volume;
+            self.volume_known = true;
         }
         if let Some(mute) = snap.mute {
             self.cached_mute = mute;
@@ -77,6 +78,7 @@ impl<B: AudioBackend> App<B> {
         match self.backend.get_volume_and_mute() {
             Ok((volume, mute)) => {
                 self.cached_volume = volume;
+                self.volume_known = true;
                 self.cached_mute = mute;
             }
             Err(e) => {
@@ -244,6 +246,9 @@ impl<B: AudioBackend> App<B> {
 
     /// Toggle the default output device's mute.
     pub(super) fn toggle_mute(&mut self) {
+        // The overlay reads the mirror; a placeholder read would show the wrong
+        // volume for the rest of the card.
+        self.ensure_volume_known();
         let target = !self.cached_mute;
         if let Err(e) = self.backend.set_mute(target) {
             tracing::warn!("set_mute failed: {e}");
@@ -277,6 +282,12 @@ impl<B: AudioBackend> App<B> {
     /// Stepping from the mirror keeps one notch down to a single endpoint
     /// write: no read-back, no property-store lookup, no Shell round-trip.
     pub(super) fn nudge_volume(&mut self, delta: i32) {
+        // A failed startup read leaves only the placeholder midpoint. Read the
+        // endpoint once before stepping from it, or the first notch would jump
+        // to `50 + delta` instead of moving from what is actually playing.
+        if !self.ensure_volume_known() {
+            return;
+        }
         let target =
             crate::config::clamp_volume(stepped_volume(self.cached_volume, delta), &self.cfg);
         match self.backend.set_volume(target) {
@@ -289,11 +300,54 @@ impl<B: AudioBackend> App<B> {
             }
         }
         // Without this the gesture is silent feedback: the card moves and
-        // nothing is audible, because the endpoint is still muted.
-        if lifts_mute(delta, self.cached_mute) {
-            self.lift_mute();
+        // nothing is audible, because the endpoint is still muted. Zero is the
+        // other edge: it must raise the same muted state as the middle-click
+        // toggle, or the icon, menu check and card disagree with a silent
+        // endpoint.
+        match mute_change_for_step(target, delta, self.cached_mute) {
+            Some(MuteChange::Mute) => self.mute_at_zero(),
+            Some(MuteChange::Unmute) => self.lift_mute(),
+            None => {}
         }
         self.show_osd();
+    }
+
+    /// Enter the mute state when a volume step reaches zero.
+    ///
+    /// The overlay, tray icon and menu check all read the mirror, so a failed
+    /// write leaves them unmuted rather than showing a state the endpoint
+    /// rejected.
+    fn mute_at_zero(&mut self) {
+        if let Err(e) = self.backend.set_mute(true) {
+            tracing::warn!("set_mute failed when the volume reached zero: {e}");
+            return;
+        }
+        self.cached_mute = true;
+        // The same two read-outs as `toggle_mute`.
+        self.tray.sync_mute(true);
+        self.tray.update_icon_if_changed(true);
+    }
+
+    /// Read the endpoint once after a failed startup snapshot.
+    ///
+    /// The midpoint seeded at startup keeps the UI usable, but it must never
+    /// become a step origin or the OSD's reading. A failed read leaves the
+    /// mirror unknown and the caller decides whether the gesture can proceed.
+    fn ensure_volume_known(&mut self) -> bool {
+        if self.volume_known {
+            return true;
+        }
+        match self.backend.get_volume() {
+            Ok(volume) => {
+                self.cached_volume = volume;
+                self.volume_known = true;
+                true
+            }
+            Err(e) => {
+                tracing::warn!("volume read failed; keeping the placeholder: {e}");
+                false
+            }
+        }
     }
 
     /// Clear mute for a volume-up gesture.
@@ -353,6 +407,31 @@ impl<B: AudioBackend> App<B> {
 /// less sound is not asking for sound.
 fn lifts_mute(delta: i32, muted: bool) -> bool {
     delta > 0 && muted
+}
+
+/// Mute state a volume step implies beyond the write itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MuteChange {
+    /// The step reached 0% and the endpoint is not already muted.
+    Mute,
+    /// A volume-up gesture from the muted state.
+    Unmute,
+}
+
+/// Whether `target`/`delta` change mute, and in which direction.
+///
+/// Zero and the mute flag are two representations of "no sound": reaching 0%
+/// enters the same state as the mute toggle so every read-out can render it
+/// the same way. Anything above zero keeps the flag, except a volume-up
+/// gesture, which lifts it.
+fn mute_change_for_step(target: u32, delta: i32, muted: bool) -> Option<MuteChange> {
+    if target == 0 {
+        (!muted).then_some(MuteChange::Mute)
+    } else if lifts_mute(delta, muted) {
+        Some(MuteChange::Unmute)
+    } else {
+        None
+    }
 }
 
 /// Apply a menu action whose whole effect is a config field.

@@ -58,6 +58,28 @@ fn only_a_volume_up_gesture_lifts_mute() {
     assert!(!lifts_mute(HOTKEY_VOLUME_STEP, false));
 }
 
+/// Reaching 0% enters the same muted state as the middle-click toggle, so the
+/// icon, menu check and overlay all render one state. The next volume-up
+/// leaves it, exactly as it does from a middle-click mute.
+#[test]
+fn reaching_zero_enters_the_muted_state() {
+    assert_eq!(
+        mute_change_for_step(0, -HOTKEY_VOLUME_STEP, false),
+        Some(MuteChange::Mute)
+    );
+    // Already muted: the endpoint write and its feedback would be a no-op.
+    assert_eq!(mute_change_for_step(0, -HOTKEY_VOLUME_STEP, true), None);
+    // Volume-up from muted clears it, at any non-zero volume.
+    assert_eq!(
+        mute_change_for_step(2, HOTKEY_VOLUME_STEP, true),
+        Some(MuteChange::Unmute)
+    );
+    // Everything else only writes the volume.
+    assert_eq!(mute_change_for_step(48, -HOTKEY_VOLUME_STEP, true), None);
+    assert_eq!(mute_change_for_step(48, -HOTKEY_VOLUME_STEP, false), None);
+    assert_eq!(mute_change_for_step(48, HOTKEY_VOLUME_STEP, false), None);
+}
+
 /// The three language entries store the mode and the resolved UI language
 /// together: a stale `ui_lang` would render the menu in the previous language.
 #[test]
