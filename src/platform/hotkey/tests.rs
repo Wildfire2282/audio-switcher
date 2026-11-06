@@ -101,19 +101,14 @@ fn action_ids_are_stable_and_reversible() {
 }
 
 #[test]
-fn summarize_lists_every_occupied_combo() {
-    let occupied = vec![
-        (HotkeyAction::Mute, "Ctrl+Alt+M".parse::<Hotkey>().unwrap()),
-        (
-            HotkeyAction::VolumeUp,
-            "Ctrl+Alt+Up".parse::<Hotkey>().unwrap(),
-        ),
-    ];
-    let text = summarize(&occupied);
-    assert!(text.contains("Ctrl+Alt+M (Toggle Mute)"), "{text}");
-    assert!(text.contains("Ctrl+Alt+Up (Volume Up)"), "{text}");
-    // The error renders the same list (single formatting path).
-    assert!(HotkeyError(occupied).to_string().contains(&text));
+fn the_conflict_error_names_the_cause() {
+    // The localized dialog in `app::setup` renders the combo list; the error
+    // type only has to name its cause once something logs it.
+    let err = HotkeyError(vec![(
+        HotkeyAction::Mute,
+        "Ctrl+Alt+M".parse::<Hotkey>().unwrap(),
+    )]);
+    assert!(err.to_string().contains("another program"), "{err}");
 }
 
 #[test]

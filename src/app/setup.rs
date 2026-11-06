@@ -61,7 +61,7 @@ pub(super) fn apply_hotkeys(cfg: &AppConfig) {
     };
     let lang = cfg.effective_lang();
     // The combos and the actions they drive have to match the config file's
-    // wording; `summarize` is the English form the log error carries.
+    // wording; the log-side `HotkeyError` Display stays a static English cause.
     let list = occupied
         .iter()
         .map(|(action, hotkey)| {

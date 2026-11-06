@@ -320,22 +320,12 @@ pub(crate) fn describe_hotkey(hotkey: &Hotkey) -> String {
     hotkey.to_string()
 }
 
-/// Registration failure: combinations another program already owns. Every
-/// occupied combo is collected in one report (`describe_hotkey` guidance in
-/// the message) so the user fixes them in one pass.
+/// Registration failure: combinations another program already owns. The combos
+/// are collected in one report so the user fixes them in one pass; the
+/// localized dialog in `app::setup` renders the list.
 #[derive(Debug, Clone, Error)]
-#[error("hotkeys already in use by another program: {}", summarize(.0))]
+#[error("hotkeys already in use by another program")]
 pub(crate) struct HotkeyError(pub Vec<(HotkeyAction, Hotkey)>);
-
-/// `"Ctrl+Alt+M (Toggle Mute), …"` — shared by [`HotkeyError`] and the app dialog.
-#[must_use]
-pub(crate) fn summarize(occupied: &[(HotkeyAction, Hotkey)]) -> String {
-    occupied
-        .iter()
-        .map(|(action, hotkey)| format!("{} ({})", describe_hotkey(hotkey), action.name()))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
 
 /// Register `bindings` on the calling thread, replacing any previous set.
 ///
