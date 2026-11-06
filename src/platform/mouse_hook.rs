@@ -69,24 +69,30 @@ fn is_button_down(msg: u32) -> bool {
     )
 }
 
-/// Whether this thread is inside one of its own menu loops.
+/// Whether this process's UI thread is inside one of its own menu loops.
 ///
 /// A modal menu pumps messages, so the low-level hook still runs while it is
 /// open: without this check a roll meant for the menu sits in the accumulator
 /// and then changes the volume, late, when the menu closes.
+///
+/// The thread id is passed explicitly: `GetGUIThreadInfo(0, ..)` answers for
+/// the *foreground* thread, so it also reports another application's open menu
+/// and would drop a wheel roll meant for the tray.
 #[cfg(windows)]
 fn in_menu_mode() -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{
         GUI_INMENUMODE, GUITHREADINFO, GUITHREADINFO_FLAGS, GetGUIThreadInfo,
+    };
+    let Some(thread) = crate::platform::pump::ui_thread_id() else {
+        return false;
     };
     let mut info = GUITHREADINFO {
         cbSize: u32::try_from(std::mem::size_of::<GUITHREADINFO>()).unwrap_or(0),
         ..Default::default()
     };
     // SAFETY: `GetGUIThreadInfo` writes a POD out-parameter sized by `cbSize`;
-    // a null thread id asks about the calling thread, which is where the hook
-    // procedure runs.
-    let queried = unsafe { GetGUIThreadInfo(0, &raw mut info) }.is_ok();
+    // `thread` owns the live message-loop window.
+    let queried = unsafe { GetGUIThreadInfo(thread, &raw mut info) }.is_ok();
     queried && info.flags & GUI_INMENUMODE != GUITHREADINFO_FLAGS(0)
 }
 
@@ -136,7 +142,7 @@ unsafe extern "system" fn hook_proc(
 /// exactly the hook that guard installed. `App` keeps a single
 /// `Option<WheelHook>` and that option is what prevents a second install.
 // The `PhantomData<*const ()>` makes it `!Send` — HHOOK is thread-affine.
-pub struct WheelHook {
+pub(crate) struct WheelHook {
     /// `0` means no hook (the non-Windows stub, and nothing else).
     handle: isize,
     _marker: std::marker::PhantomData<*const ()>,
@@ -147,7 +153,7 @@ impl WheelHook {
     ///
     /// Returns `None` on Windows if `SetWindowsHookExW` fails.
     #[must_use]
-    pub fn install() -> Option<Self> {
+    pub(crate) fn install() -> Option<Self> {
         #[cfg(windows)]
         {
             // SAFETY: WH_MOUSE_LL is process-global, hook_proc has correct signature.

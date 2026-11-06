@@ -7,7 +7,7 @@
 /// Not a cadence. A notification posts [`wake`] and the loop ends the wait at
 /// once, so while something is happening the loop runs per event; while nothing
 /// is, it sleeps here.
-pub const PUMP_IDLE_MS: u32 = 15_000;
+pub(crate) const PUMP_IDLE_MS: u32 = 15_000;
 
 /// Posted to the wake window to end a message wait early.
 #[cfg(windows)]
@@ -23,7 +23,7 @@ const WAIT_FAILURE_BACKOFF: std::time::Duration = std::time::Duration::from_mill
 #[cfg(windows)]
 mod wake {
     use std::sync::Once;
-    use std::sync::atomic::{AtomicIsize, Ordering};
+    use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
     use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -37,6 +37,12 @@ mod wake {
     /// The message-only wake window, or `0` before [`init`] (and after a failed
     /// creation).
     static WAKE_HWND: AtomicIsize = AtomicIsize::new(0);
+
+    /// Thread that owns [`WAKE_HWND`], or `0` before [`init`].
+    ///
+    /// Cached instead of asked through the window on every use: the wheel hook
+    /// calls [`super::ui_thread_id`] once per notch.
+    static UI_THREAD: AtomicU32 = AtomicU32::new(0);
 
     /// A window procedure is required to own a window; every message is
     /// answered by the default handling, since the window exists only so
@@ -102,10 +108,24 @@ mod wake {
                 )
             };
             match hwnd {
-                Ok(h) if !h.0.is_null() => WAKE_HWND.store(h.0 as isize, Ordering::Release),
+                Ok(h) if !h.0.is_null() => {
+                    // SAFETY: `h` is the live window just created; the process
+                    // id out-parameter is not needed.
+                    let thread = unsafe {
+                        windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(h, None)
+                    };
+                    UI_THREAD.store(thread, Ordering::Release);
+                    WAKE_HWND.store(h.0 as isize, Ordering::Release);
+                }
                 other => tracing::warn!("pump: wake window creation failed: {other:?}"),
             }
         });
+    }
+
+    /// Thread that owns the wake window, `None` before [`init`] succeeds.
+    pub(super) fn ui_thread_id() -> Option<u32> {
+        let thread = UI_THREAD.load(Ordering::Acquire);
+        (thread != 0).then_some(thread)
     }
 
     /// End a message wait from any thread. No-op before [`init`] succeeded and
@@ -133,6 +153,20 @@ mod wake {
 #[cfg(windows)]
 pub(crate) fn init_wake_channel() {
     wake::init();
+}
+
+/// Thread that owns the message loop's window, `None` when it could not be
+/// created. Callers pass it to Win32 APIs that otherwise answer for the
+/// foreground thread (see `mouse_hook`'s menu-mode check).
+#[cfg(windows)]
+pub(crate) fn ui_thread_id() -> Option<u32> {
+    wake::ui_thread_id()
+}
+
+/// No message loop window off Windows.
+#[cfg(not(windows))]
+pub(crate) fn ui_thread_id() -> Option<u32> {
+    None
 }
 
 /// Create the wake window. Call once, from the UI thread, before the loop.
