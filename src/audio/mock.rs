@@ -11,7 +11,7 @@ use crate::config::{AppConfig, clamp_volume};
 use super::{AudioBackend, AudioDevice, AudioError};
 
 #[derive(Debug, Clone)]
-pub struct MockBackend {
+pub(crate) struct MockBackend {
     pub(crate) devices: Vec<AudioDevice>,
     pub(crate) default_id: Option<String>,
     pub(crate) input_devices: Vec<AudioDevice>,
@@ -26,7 +26,7 @@ pub struct MockBackend {
 }
 
 impl MockBackend {
-    pub fn new(devices: Vec<AudioDevice>, default_id: Option<String>) -> Self {
+    pub(crate) fn new(devices: Vec<AudioDevice>, default_id: Option<String>) -> Self {
         Self {
             devices,
             default_id,
@@ -43,7 +43,11 @@ impl MockBackend {
 
     /// Attach capture (input) devices for tests.
     #[must_use]
-    pub fn with_inputs(mut self, devices: Vec<AudioDevice>, default_id: Option<String>) -> Self {
+    pub(crate) fn with_inputs(
+        mut self,
+        devices: Vec<AudioDevice>,
+        default_id: Option<String>,
+    ) -> Self {
         self.input_devices = devices;
         self.default_input_id = default_id;
         self
@@ -57,7 +61,7 @@ impl MockBackend {
         None
     }
 
-    pub fn set_volume_impl(&mut self, volume: u32) -> Result<(), AudioError> {
+    pub(crate) fn set_volume_impl(&mut self, volume: u32) -> Result<(), AudioError> {
         if let Some(e) = self.maybe_fail() {
             return Err(e);
         }

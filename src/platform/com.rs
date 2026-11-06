@@ -22,6 +22,7 @@ pub enum ComError {
 /// Contains a `PhantomData<*const ()>` marker so it cannot be sent across
 /// threads; `CoUninitialize` must run on the same STA thread that called
 /// `CoInitializeEx`.
+#[derive(Debug)]
 pub struct ComGuard {
     #[cfg(windows)]
     _private: (),
@@ -36,7 +37,7 @@ impl ComGuard {
     ///
     /// # Errors
     ///
-    /// Returns [`ComError::InitFailed`] when `CoInitializeEx` fails.
+    /// Returns the init-failed error when `CoInitializeEx` fails.
     #[must_use = "a failed COM init must exit the process, never be ignored"]
     pub fn init() -> Result<Self, ComError> {
         #[cfg(windows)]

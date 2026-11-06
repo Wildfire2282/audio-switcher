@@ -6,7 +6,7 @@ use crate::config::Lang;
 
 /// Unknown keys are returned verbatim, which keeps menus debuggable.
 #[must_use]
-pub fn tr(key: &str, lang: Lang) -> String {
+pub(crate) fn tr(key: &str, lang: Lang) -> String {
     let zh = lang.is_zh();
     match key {
         "mute" => {

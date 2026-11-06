@@ -6,22 +6,22 @@
 //! path, and `utf16` is the shared UTF-16 boundary conversion. Those edges are
 //! noted on the callee side per the module contract.
 
-pub mod autostart;
-pub mod com;
-pub mod dialog;
-pub mod hotkey;
-pub mod locale;
-pub mod logging;
-pub mod mouse_hook;
-pub mod osd;
-pub mod pump;
-pub mod shell;
-pub mod single_instance;
-pub mod theme;
+pub(crate) mod autostart;
+pub(crate) mod com;
+pub(crate) mod dialog;
+pub(crate) mod hotkey;
+pub(crate) mod locale;
+pub(crate) mod logging;
+pub(crate) mod mouse_hook;
+pub(crate) mod osd;
+pub(crate) mod pump;
+pub(crate) mod shell;
+pub(crate) mod single_instance;
+pub(crate) mod theme;
 #[cfg(windows)]
-pub mod utf16;
+pub(crate) mod utf16;
 
-pub use autostart::{
+pub(crate) use autostart::{
     AutostartMode, autostart_state, refresh_admin_task_cache, run_entry_absent, set_autostart_mode,
 };
 pub use com::ComGuard;

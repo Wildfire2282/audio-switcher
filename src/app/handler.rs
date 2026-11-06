@@ -6,6 +6,7 @@ use crate::platform::AutostartMode;
 /// documentation; a payload is the id the menu emitted.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MenuAction {
     Device(String),
     InputDevice(String),
@@ -32,9 +33,9 @@ pub enum MenuAction {
 impl MenuAction {
     /// Parse a menu ID into a typed action.
     ///
-    /// IDs are produced by [`crate::ui::menu`]; device IDs keep the
-    /// [`crate::ui::menu::DEVICE_PREFIX`] prefix and `vol_N` presets parse
-    /// through [`crate::ui::menu::id::parse_vol_preset`].
+    /// IDs are produced by the tray menu: device IDs keep the `device_` /
+    /// `input_` prefix (the remainder is the endpoint ID), and `vol_25` /
+    /// `vol_50` / `vol_75` are the volume-limit presets.
     #[must_use]
     pub fn from_id(id: &str) -> Self {
         use crate::ui::menu::{DEVICE_PREFIX, INPUT_PREFIX, id as menu_id};

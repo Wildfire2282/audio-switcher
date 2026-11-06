@@ -110,7 +110,7 @@ fn first_window_matching(matches: &impl Fn(isize) -> bool) -> Option<isize> {
         l_param: LPARAM,
     ) -> BOOL {
         // SAFETY: the contract above.
-        let ctx = unsafe { &mut *(l_param.0 as *mut Ctx) };
+        let ctx = unsafe { &mut *(l_param.0 as *mut Ctx<'_>) };
         if (ctx.matches)(hwnd.0 as isize) {
             ctx.found = Some(hwnd.0 as isize);
             return FALSE;

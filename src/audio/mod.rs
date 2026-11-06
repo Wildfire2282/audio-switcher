@@ -139,13 +139,13 @@ pub struct AudioSnapshot {
 }
 
 #[cfg(test)]
-pub mod mock;
+pub(crate) mod mock;
 #[cfg(test)]
-pub use mock::MockBackend;
+pub(crate) use mock::MockBackend;
 
 /// Real Windows WASAPI backend.
-pub mod wasapi;
-pub use wasapi::WasapiBackend;
+pub(crate) mod wasapi;
+pub(crate) use wasapi::WasapiBackend;
 
 #[cfg(test)]
 mod tests;

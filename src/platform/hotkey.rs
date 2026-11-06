@@ -196,7 +196,7 @@ const NAMED_KEYS: &[(&str, u32)] = &[
 /// Parsed from a canonical string (`"Ctrl+Alt+M"`, case-insensitive) and
 /// rendered back in canonical form, so a config round-trip is lossless.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Hotkey {
+pub(crate) struct Hotkey {
     /// Win32 `MOD_*` bitmask.
     mods: u32,
     /// Key display name (letters/digits render from `vk`).
@@ -221,7 +221,7 @@ impl Hotkey {
 
 /// Why a combination string was rejected.
 #[derive(Debug, Clone, Copy, Error, PartialEq, Eq)]
-pub enum HotkeyParseError {
+pub(crate) enum HotkeyParseError {
     /// Empty input or an empty `+`-separated token (e.g. `"Ctrl++"`).
     #[error("empty or malformed combination")]
     Malformed,
@@ -316,7 +316,7 @@ impl fmt::Display for Hotkey {
 
 /// Human-readable combination (`"Ctrl+Alt+M"`) for logs and dialogs.
 #[must_use]
-pub fn describe_hotkey(hotkey: &Hotkey) -> String {
+pub(crate) fn describe_hotkey(hotkey: &Hotkey) -> String {
     hotkey.to_string()
 }
 
@@ -325,11 +325,11 @@ pub fn describe_hotkey(hotkey: &Hotkey) -> String {
 /// the message) so the user fixes them in one pass.
 #[derive(Debug, Clone, Error)]
 #[error("hotkeys already in use by another program: {}", summarize(.0))]
-pub struct HotkeyError(pub Vec<(HotkeyAction, Hotkey)>);
+pub(crate) struct HotkeyError(pub Vec<(HotkeyAction, Hotkey)>);
 
 /// `"Ctrl+Alt+M (Toggle Mute), …"` — shared by [`HotkeyError`] and the app dialog.
 #[must_use]
-pub fn summarize(occupied: &[(HotkeyAction, Hotkey)]) -> String {
+pub(crate) fn summarize(occupied: &[(HotkeyAction, Hotkey)]) -> String {
     occupied
         .iter()
         .map(|(action, hotkey)| format!("{} ({})", describe_hotkey(hotkey), action.name()))
@@ -347,7 +347,7 @@ pub fn summarize(occupied: &[(HotkeyAction, Hotkey)]) -> String {
 ///
 /// Returns [`HotkeyError`] listing every combination another program owns.
 #[cfg(windows)]
-pub fn register_all(bindings: &[(HotkeyAction, Hotkey)]) -> Result<(), HotkeyError> {
+pub(crate) fn register_all(bindings: &[(HotkeyAction, Hotkey)]) -> Result<(), HotkeyError> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{HOT_KEY_MODIFIERS, RegisterHotKey};
     unregister_all();
     let mut occupied = Vec::new();
@@ -386,14 +386,14 @@ pub fn register_all(bindings: &[(HotkeyAction, Hotkey)]) -> Result<(), HotkeyErr
 }
 
 #[cfg(not(windows))]
-pub fn register_all(_bindings: &[(HotkeyAction, Hotkey)]) -> Result<(), HotkeyError> {
+pub(crate) fn register_all(_bindings: &[(HotkeyAction, Hotkey)]) -> Result<(), HotkeyError> {
     Ok(())
 }
 
 /// Release every combination [`register_all`] bound. Idempotent; must run on
 /// the registering thread.
 #[cfg(windows)]
-pub fn unregister_all() {
+pub(crate) fn unregister_all() {
     use windows::Win32::UI::Input::KeyboardAndMouse::UnregisterHotKey;
     let mask = REGISTERED.swap(0, std::sync::atomic::Ordering::AcqRel);
     for action in HotkeyAction::ALL {
@@ -405,7 +405,7 @@ pub fn unregister_all() {
 }
 
 #[cfg(not(windows))]
-pub fn unregister_all() {}
+pub(crate) fn unregister_all() {}
 
 /// Record a `WM_HOTKEY` id for the app loop. Called by `pump`; never blocks.
 #[cfg(windows)]

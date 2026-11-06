@@ -114,7 +114,7 @@ pub const TOOL_ID: &str = "audio-switcher";
 pub const TOOL_DISPLAY_NAME: &str = "AudioSwitcher";
 
 /// Tool release homepage. Single definition per crate; the About menu item
-/// opens exactly this URL (validated through [`platform::shell::Url`]).
+/// opens exactly this URL, after validating its scheme and host.
 pub const ABOUT_URL: &str = "https://github.com/Wildfire2282/audio-switcher";
 
 /// Canonical single-instance mutex id: `{kebab}-single-instance-v1`.
@@ -134,7 +134,9 @@ pub fn display_name_for(kebab: &str) -> String {
             match chars.next() {
                 // Uppercase may expand (e.g. ligatures); lowercase the rest.
                 Some(first) => {
-                    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                    let mut name: String = first.to_uppercase().collect();
+                    name.push_str(&chars.as_str().to_lowercase());
+                    name
                 }
                 None => String::new(),
             }

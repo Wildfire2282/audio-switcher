@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 /// Tracks recent wheel events to compute acceleration.
 #[derive(Debug, Default)]
-pub struct WheelState {
+pub(crate) struct WheelState {
     history: VecDeque<Instant>,
     /// Sign of the last notch: a reversal starts a fresh burst instead of
     /// inheriting the previous gesture's step.
@@ -16,7 +16,7 @@ pub struct WheelState {
 
 impl WheelState {
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             history: VecDeque::new(),
             last_direction: 0,
@@ -27,7 +27,7 @@ impl WheelState {
     ///
     /// Acceleration is always on: fast scrolling yields larger steps.
     #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-    pub fn push(&mut self, now: Instant, delta: i32) -> u32 {
+    pub(crate) fn push(&mut self, now: Instant, delta: i32) -> u32 {
         // Reversing direction ends the previous burst: the window measures how
         // fast the user is scrolling, and carrying it across a reversal applies
         // an accelerated step the other way on the first notch back.
@@ -72,7 +72,7 @@ impl WheelState {
     /// no delta at all steps nothing: a caller that passes a drained-down-to-zero
     /// accumulator must not get a phantom notch in the positive direction.
     #[must_use]
-    pub fn total_step(delta: i32, step_per_tick: u32) -> i32 {
+    pub(crate) fn total_step(delta: i32, step_per_tick: u32) -> i32 {
         if delta == 0 {
             return 0;
         }
@@ -88,7 +88,7 @@ impl WheelState {
     }
 
     /// Clear history (e.g. on hover leave).
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.history.clear();
         self.last_direction = 0;
     }
@@ -99,7 +99,7 @@ impl WheelState {
 /// Acceleration is always on: bursts (`count >= 5`) or fast intervals
 /// (`< 80ms`) step 5%, moderate bursts step 2%, isolated ticks step 1%.
 #[must_use]
-pub fn calc_step(count: usize, min_interval_ms: u128) -> u32 {
+pub(crate) fn calc_step(count: usize, min_interval_ms: u128) -> u32 {
     if count >= 5 || min_interval_ms < 80 {
         5
     } else if count >= 3 {

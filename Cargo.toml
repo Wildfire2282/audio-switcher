@@ -61,6 +61,9 @@ winres = "0.1.12"
 unexpected_cfgs = "warn"
 missing_docs = "warn"
 unsafe_op_in_unsafe_fn = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
 
 [lints.clippy]
 correctness = { level = "deny", priority = 1 }
@@ -88,6 +91,21 @@ ref_as_ptr = "warn"
 # Restriction group, but it is exactly the rule the code already follows:
 # every `unsafe` block carries a `// SAFETY:` comment saying why it is sound.
 undocumented_unsafe_blocks = "warn"
+unwrap_used = "warn"
+wildcard_imports = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+dbg_macro = "warn"
+todo = "warn"
+clone_on_ref_ptr = "warn"
+rc_buffer = "warn"
+struct_excessive_bools = "warn"
+panic_in_result_fn = "warn"
+missing_assert_message = "warn"
+redundant_clone = "warn"
+string_add = "warn"
+fn_params_excessive_bools = "warn"
+exhaustive_enums = "warn"
 
 [profile.release]
 opt-level = "z"

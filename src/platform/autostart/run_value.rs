@@ -5,7 +5,7 @@ use super::{AutostartError, autostart_key_name, get_exe_path};
 /// Pre-scheme Run-value names that must be removed when the autostart scheme is
 /// (re-)applied. Locked by test: the cleanup must not miss a legacy name and
 /// must never include the canonical [`autostart_key_name`].
-pub const LEGACY_AUTOSTART_KEYS: &[&str] = &["audio-switcher", "Audio Switcher"];
+pub(crate) const LEGACY_AUTOSTART_KEYS: &[&str] = &["audio-switcher", "Audio Switcher"];
 
 /// `HKCU` subkey holding the current-user logon `Run` values.
 pub(super) const RUN_KEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";

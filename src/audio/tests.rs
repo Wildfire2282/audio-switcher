@@ -12,7 +12,7 @@ fn mock_enumerate_cache() {
         id: "a".into(),
         name: "Speaker".into(),
     }];
-    let mut m = MockBackend::new(devs.clone(), Some("a".into()));
+    let mut m = MockBackend::new(devs, Some("a".into()));
     let first = m.enumerate_devices().unwrap();
     assert_eq!(first.len(), 1);
     let count_before = m.enumerate_count;
@@ -33,7 +33,7 @@ fn mock_empty_shows_empty() {
         id: "a".into(),
         name: "Sp".into(),
     }];
-    let mut m = MockBackend::new(devs.clone(), Some("a".into()));
+    let mut m = MockBackend::new(devs, Some("a".into()));
     let _ = m.enumerate_devices().unwrap();
     m.devices = vec![];
     std::thread::sleep(std::time::Duration::from_millis(850));

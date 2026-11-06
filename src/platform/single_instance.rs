@@ -23,6 +23,13 @@ pub struct SingleInstanceGuard {
     _instance: SingleInstance,
 }
 
+impl std::fmt::Debug for SingleInstanceGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SingleInstanceGuard")
+            .finish_non_exhaustive()
+    }
+}
+
 impl SingleInstanceGuard {
     /// Try to acquire the single-instance lock.
     ///
@@ -31,7 +38,7 @@ impl SingleInstanceGuard {
     ///
     /// # Errors
     ///
-    /// Returns [`InstanceError::CreateFailed`] when the OS primitive fails.
+    /// Returns the create-failed error when the OS primitive fails.
     pub fn acquire(name: &str) -> Result<Option<Self>, InstanceError> {
         let instance = SingleInstance::new(name).map_err(InstanceError::CreateFailed)?;
         if !instance.is_single() {

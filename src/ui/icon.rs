@@ -19,7 +19,7 @@ static ICON_CACHE: LazyLock<Mutex<[Option<Icon>; 2]>> = LazyLock::new(|| Mutex::
 /// Returns the underlying `BadIcon` error when the embedded RGBA bytes
 /// are invalid; the caller surfaces it through [`TrayError`](super::tray::TrayError)
 /// (dialog + exit at startup) or logs it (runtime icon refresh).
-pub fn make_icon(muted: bool) -> Result<Icon, tray_icon::BadIcon> {
+pub(crate) fn make_icon(muted: bool) -> Result<Icon, tray_icon::BadIcon> {
     let idx = usize::from(muted);
     if let Some(cached) = ICON_CACHE
         .lock()

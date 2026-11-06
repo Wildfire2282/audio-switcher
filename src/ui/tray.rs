@@ -42,7 +42,7 @@ pub enum TrayError {
 }
 
 /// Wrapper around `tray-icon`'s `TrayIcon` holding the menu handles.
-pub struct TrayWrapper {
+pub(crate) struct TrayWrapper {
     pub tray: TrayIcon,
     /// Kept alive for the tray icon's lifetime.
     pub handles: MenuHandles,
@@ -69,7 +69,7 @@ impl TrayWrapper {
     ///
     /// Returns [`TrayError::Build`] when the tray icon cannot be created, and
     /// [`TrayError::Menu`] when the menu itself cannot be built.
-    pub fn new(state: &MenuState<'_>) -> Result<Self, TrayError> {
+    pub(crate) fn new(state: &MenuState<'_>) -> Result<Self, TrayError> {
         let handles = build_menu(state)?;
         let icon = make_icon(state.muted)?;
         let tray = TrayIconBuilder::new()
@@ -92,7 +92,7 @@ impl TrayWrapper {
     ///
     /// A full [`Self::sync_menu`] would walk the device list for nothing; the
     /// icon is updated separately so the two read-outs stay in step.
-    pub fn sync_mute(&mut self, muted: bool) {
+    pub(crate) fn sync_mute(&mut self, muted: bool) {
         self.handles.set_muted(muted);
     }
 
@@ -100,7 +100,7 @@ impl TrayWrapper {
     ///
     /// A failed push leaves the recorded state alone so the next call retries
     /// instead of silently believing the icon is current.
-    pub fn update_icon_if_changed(&mut self, muted: bool) {
+    pub(crate) fn update_icon_if_changed(&mut self, muted: bool) {
         if self.pushed_mute == Some(muted) {
             return;
         }
@@ -126,7 +126,7 @@ impl TrayWrapper {
     /// `None` while the shell has not reported a rectangle yet (the caller then
     /// falls back to the screen).
     #[must_use]
-    pub fn icon_rect(&self) -> Option<(i32, i32, i32, i32)> {
+    pub(crate) fn icon_rect(&self) -> Option<(i32, i32, i32, i32)> {
         if let Some((rect, taken)) = self.rect_cache.get() {
             if taken.elapsed() < ICON_RECT_TTL {
                 return Some(rect);
@@ -148,7 +148,7 @@ impl TrayWrapper {
     /// A failure logs and keeps the menu that is already on screen. Dropping it
     /// would leave the tray icon with no way to switch devices, and panicking
     /// would kill a running app over a transient Win32 resource problem.
-    pub fn rebuild_menu(&mut self, state: &MenuState<'_>) {
+    pub(crate) fn rebuild_menu(&mut self, state: &MenuState<'_>) {
         let new_handles = match build_menu(state) {
             Ok(handles) => handles,
             Err(e) => {
@@ -165,7 +165,7 @@ impl TrayWrapper {
     /// Applies checks/enabled states in place when the device list is
     /// unchanged; falls back to a full rebuild only when devices were
     /// added/removed/reordered.
-    pub fn sync_menu(&mut self, state: &MenuState<'_>) {
+    pub(crate) fn sync_menu(&mut self, state: &MenuState<'_>) {
         if !self.handles.sync_state(state) {
             self.rebuild_menu(state);
         }

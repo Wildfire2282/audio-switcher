@@ -12,10 +12,10 @@ use std::str::FromStr;
 use thiserror::Error;
 
 /// Hosts allowed for external navigation (publishing domains only).
-pub const URL_ALLOWLIST: &[&str] = &["github.com"];
+pub(crate) const URL_ALLOWLIST: &[&str] = &["github.com"];
 
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum UrlError {
+pub(crate) enum UrlError {
     /// Scheme is not `https`.
     #[error("URL scheme must be https")]
     Scheme,
@@ -31,11 +31,11 @@ pub enum UrlError {
 ///
 /// Parse once via [`FromStr`]; illegal schemes never reach `ShellExecuteW`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Url(String);
+pub(crate) struct Url(String);
 
 impl Url {
     #[must_use]
-    pub fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
 }
@@ -64,7 +64,7 @@ impl FromStr for Url {
 
 /// Shell execution failure with the verb/target preserved for diagnostics.
 #[derive(Debug, Error)]
-pub enum ShellError {
+pub(crate) enum ShellError {
     /// Value contains an interior NUL and cannot become a wide string.
     #[error("shell target contains interior NUL")]
     InteriorNul,
