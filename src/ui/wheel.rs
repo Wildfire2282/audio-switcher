@@ -94,13 +94,14 @@ impl WheelState {
     }
 }
 
-/// Compute step from history size and minimal interval.
+/// Compute the step from history size and the interval between the last two
+/// events.
 ///
-/// Acceleration is always on: bursts (`count >= 5`) or fast intervals
+/// Acceleration is always on: bursts (`count >= 5`) or a fast last interval
 /// (`< 80ms`) step 5%, moderate bursts step 2%, isolated ticks step 1%.
 #[must_use]
-pub(crate) fn calc_step(count: usize, min_interval_ms: u128) -> u32 {
-    if count >= 5 || min_interval_ms < 80 {
+pub(crate) fn calc_step(count: usize, last_interval_ms: u128) -> u32 {
+    if count >= 5 || last_interval_ms < 80 {
         5
     } else if count >= 3 {
         2
