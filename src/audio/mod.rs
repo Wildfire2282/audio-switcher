@@ -1,6 +1,7 @@
 //! Audio backend abstraction: the port for device enumeration, default
-//! switching and volume/mute control, generic over `App` so tests inject
-//! `MockBackend` and Windows uses `WasapiBackend`.
+//! switching and volume/mute control. `WasapiBackend` is the Windows
+//! implementation; `MockBackend` (tests only) pins the contract without
+//! hardware.
 //!
 //! The cast lints are allowed for the whole layer, not per file: every flagged
 //! conversion is at the COM boundary, where the alternative is a `try_from`

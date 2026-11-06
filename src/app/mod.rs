@@ -43,7 +43,9 @@ mod steps;
 
 use setup::{apply_hotkeys, ensure_autostart};
 
-/// App owns all runtime state. Generic over the audio backend for test injection.
+/// App owns all runtime state. Generic over the audio backend: production
+/// instantiates it with `WasapiBackend`, and the `AudioBackend` port is what
+/// tests pin without hardware.
 // The bools are independent runtime flags (pending work, exit, audio state),
 // not a set of mutually exclusive modes.
 #[expect(
