@@ -191,6 +191,9 @@ fn run_value_round_trip() {
     // real registry: write, read back as installed, then remove. The stored
     // bytes are the contract an installed copy of another version still has to
     // recognise, so they are asserted, not just the round trip.
+    // The pre-state is restored afterwards: a machine with `user` autostart
+    // keeps its entry, and the next launch must not be what repairs the test.
+    let pre = run_value_state().unwrap_or(RunEntry::Absent);
     let _ = set_run_value(false);
 
     set_run_value(true).expect("enable");
@@ -227,6 +230,9 @@ fn run_value_round_trip() {
         None,
         "the Run value must be removed, not blanked"
     );
+    if pre == RunEntry::Enabled {
+        set_run_value(true).expect("restore the Run value the test found enabled");
+    }
 }
 
 #[test]
@@ -257,13 +263,44 @@ fn startup_approved_state_follows_the_state_byte() {
 
 #[test]
 #[cfg(windows)]
-#[ignore = "creates and deletes a real scheduled task; run explicitly"]
-fn create_and_delete_task_round_trip() {
+#[ignore = "runs the real schtasks against the user's task; run explicitly"]
+fn the_task_round_trip_respects_the_helper_boundary() {
     let _gate = crate::INTEGRATION_GATE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    // Exercises the production path end to end against the real tool.
-    let _ = delete_task();
+    // A task this shell already has is the user's live autostart state; the
+    // fixture must not rewrite or remove it, so the round trip only runs on a
+    // clean machine.
+    if task_exists().unwrap_or(false) {
+        assert!(
+            task_exists().expect("query task"),
+            "the task stays untouched"
+        );
+        return;
+    }
+    let elevated = {
+        // SAFETY: `IsUserAnAdmin` takes no arguments and only reads the
+        // calling token.
+        unsafe { windows::Win32::UI::Shell::IsUserAnAdmin() }.as_bool()
+    };
+    if !elevated {
+        // Medium integrity cannot write a HIGHEST task, which is exactly why
+        // the menu re-launches an elevated helper (see the autostart module
+        // doc). The detail is localized, so only the failure is asserted.
+        match create_task() {
+            Err(AutostartError::Task {
+                action: "create", ..
+            }) => {
+                assert!(
+                    !task_exists().expect("query task"),
+                    "a denied create must not leave a task behind"
+                );
+            }
+            other => panic!("a medium-integrity process must not create the task: {other:?}"),
+        }
+        return;
+    }
+    // Production runs this from the elevated helper; exercise it directly.
     create_task().expect("create task");
     assert!(task_exists().expect("query task"), "task should exist");
     delete_task().expect("delete task");
