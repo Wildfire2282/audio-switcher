@@ -170,8 +170,10 @@ impl<B: AudioBackend> App<B> {
         };
         let snap = backend.fetch_snapshot_clamped(&cfg);
         // Startup has no mirror to keep yet: seed the midpoint a failed first
-        // read used to fabricate, and the first resync replaces it.
-        let volume_known = snap.volume.is_some();
+        // read used to fabricate, and the first resync replaces it. Both values
+        // must have been read: a guessed mute would make the first toggle write
+        // the state that is already there.
+        let volume_known = snap.volume.is_some() && snap.mute.is_some();
         let cached_volume = snap.volume.unwrap_or(50);
         let cached_mute = snap.mute.unwrap_or(false);
         let default_id = snap.default_device.as_ref().map(|d| d.id.clone());
