@@ -27,6 +27,9 @@ pub(super) fn ensure_autostart(cfg: &AppConfig) {
         AutostartMode::User => {
             if crate::platform::run_entry_absent() {
                 if let Err(e) = crate::platform::set_autostart_mode(AutostartMode::User) {
+                    // The heal may have changed the task before failing; refresh
+                    // the cache so the menu is not grayed out until the next start.
+                    crate::platform::refresh_admin_task_cache();
                     crate::platform::dialog::show_msgbox(&format!(
                         "{}: {e}",
                         crate::ui::i18n::tr("autostart_error", cfg.effective_lang())
