@@ -469,8 +469,9 @@ fn after() {}
 }
 
 /// Release notes are the last rule that lived only in prose: they must be
-/// bilingual mirrors of each other, and must describe user-visible behaviour
-/// only. The release job checks the file exists; this checks it is usable.
+/// bilingual mirrors of each other, Chinese sections first, and must describe
+/// user-visible behaviour only. The release job checks the file exists; this
+/// checks it is usable.
 #[test]
 fn release_notes_are_bilingual_and_user_visible() {
     const MIRROR: &[(&str, &str)] = &[("新增", "Added"), ("修复", "Fixed"), ("变更", "Changed")];
@@ -540,6 +541,34 @@ fn release_notes_are_bilingual_and_user_visible() {
                 );
             }
         }
+
+        // Chinese sections form one block, then the English ones: an interleaved
+        // note reads as two half-translated documents. The order mirrors as
+        // well, so `修复` before `变更` pairs with `Fixed` before `Changed`.
+        let mut chinese_block_closed = false;
+        let (mut zh_order, mut en_order) = (Vec::new(), Vec::new());
+        for line in text.lines() {
+            let Some(heading) = line.strip_prefix("### ").map(str::trim) else {
+                continue;
+            };
+            if let Some((zh, _)) = MIRROR.iter().find(|(zh, _)| heading == *zh) {
+                assert!(
+                    !chinese_block_closed,
+                    "{name}: `### {heading}` comes after an English section; write every \
+                     Chinese section first"
+                );
+                zh_order.push(*zh);
+            } else {
+                chinese_block_closed = true;
+                if let Some((zh, _)) = MIRROR.iter().find(|(_, en)| heading == *en) {
+                    en_order.push(*zh);
+                }
+            }
+        }
+        assert_eq!(
+            zh_order, en_order,
+            "{name}: the English sections must mirror the Chinese ones in the same order"
+        );
 
         // No hashes and no artefact sizes, in any spelling: the notes describe
         // behaviour, never the file that carries it. Units need word boundaries
