@@ -72,7 +72,7 @@ pub(super) fn apply_hotkeys(cfg: &AppConfig) {
                 HotkeyAction::NextDevice => crate::ui::i18n::tr("hotkey_next_device", lang),
                 HotkeyAction::PrevDevice => crate::ui::i18n::tr("hotkey_prev_device", lang),
             };
-            format!("{} ({})", hotkey::describe_hotkey(hotkey), action)
+            format!("{} ({})", hotkey, action)
         })
         .collect::<Vec<_>>()
         .join(", ");

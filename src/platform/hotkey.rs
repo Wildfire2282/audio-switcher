@@ -314,12 +314,6 @@ impl fmt::Display for Hotkey {
     }
 }
 
-/// Human-readable combination (`"Ctrl+Alt+M"`) for logs and dialogs.
-#[must_use]
-pub(crate) fn describe_hotkey(hotkey: &Hotkey) -> String {
-    hotkey.to_string()
-}
-
 /// Registration failure: combinations another program already owns. The combos
 /// are collected in one report so the user fixes them in one pass; the
 /// localized dialog in `app::setup` renders the list.
@@ -358,11 +352,7 @@ pub(crate) fn register_all(bindings: &[(HotkeyAction, Hotkey)]) -> Result<(), Ho
             Err(e) => {
                 // Usually ERROR_HOTKEY_ALREADY_REGISTERED; the raw error is
                 // logged so a different cause is distinguishable in the log.
-                tracing::warn!(
-                    "hotkey {} ({}) rejected: {e}",
-                    describe_hotkey(&hotkey),
-                    action.name()
-                );
+                tracing::warn!("hotkey {} ({}) rejected: {e}", hotkey, action.name());
                 occupied.push((action, hotkey));
             }
         }
