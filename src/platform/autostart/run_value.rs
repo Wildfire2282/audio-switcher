@@ -407,6 +407,10 @@ pub(super) fn cleanup_legacy_keys() {
                 &raw mut hkey,
             )
         };
+        if is_absent(opened) {
+            // Nothing was ever installed under the current-user Run key.
+            return;
+        }
         if opened.is_err() {
             tracing::warn!("legacy autostart cleanup: cannot open Run key");
             return;
