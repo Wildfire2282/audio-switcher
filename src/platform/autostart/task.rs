@@ -286,12 +286,22 @@ pub(super) fn describe(out: &std::process::Output) -> String {
 }
 
 /// Run `schtasks` with no console window, capturing its output.
+///
+/// Resolved under `System32` rather than by bare name: `CreateProcessW` searches
+/// this process's own (writable, portable) folder first, and the elevated helper
+/// would run a planted `schtasks.exe` with administrator rights.
 #[cfg(windows)]
 fn run_schtasks(args: &[&str]) -> std::io::Result<std::process::Output> {
     use std::os::windows::process::CommandExt;
     /// Keep the console app from flashing a window over the tray.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    std::process::Command::new("schtasks.exe")
+    let exe = crate::platform::shell::system32_exe("schtasks.exe").ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "cannot resolve %SystemRoot%\\System32",
+        )
+    })?;
+    std::process::Command::new(exe)
         .args(args)
         .creation_flags(CREATE_NO_WINDOW)
         .output()

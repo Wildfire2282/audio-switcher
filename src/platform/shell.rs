@@ -184,6 +184,35 @@ pub(crate) fn open_url(url: &Url, err_msg: &str) {
     }
 }
 
+/// Full path to a system executable in `%SystemRoot%\System32`.
+///
+/// Never a bare name: `CreateProcessW` and `ShellExecuteW` search the process's
+/// own directory first, and this exe is portable — a writable folder beside it
+/// could hold a same-named `schtasks.exe` or `SndVol.exe`. In the elevated
+/// autostart helper that would run the planted binary with administrator rights.
+#[cfg(windows)]
+#[must_use]
+pub(crate) fn system32_exe(name: &str) -> Option<std::path::PathBuf> {
+    use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
+
+    let mut buf = [0u16; 260];
+    // SAFETY: `buf` is a live stack buffer; the API writes at most its length
+    // and returns the character count without the terminator.
+    let len = unsafe { GetSystemDirectoryW(Some(&mut buf)) };
+    let len = usize::try_from(len).ok()?;
+    if len == 0 || len >= buf.len() {
+        return None;
+    }
+    Some(std::path::PathBuf::from(String::from_utf16_lossy(&buf[..len])).join(name))
+}
+
+/// Non-Windows stub: there is no `System32` to resolve.
+#[cfg(not(windows))]
+#[must_use]
+pub(crate) fn system32_exe(_name: &str) -> Option<std::path::PathBuf> {
+    None
+}
+
 /// Launch a system tool through the shell and centre the dialog it opens.
 ///
 /// Both tools open at a remembered or default position (the volume mixer lands
@@ -210,7 +239,15 @@ fn open_system_tool(target: &str, params: Option<&str>, err_msg: &str, what: &st
 /// Open the system volume mixer. `err_msg` is shown when launching fails.
 pub(crate) fn open_volume_mixer(err_msg: &str) {
     #[cfg(windows)]
-    open_system_tool("SndVol.exe", None, err_msg, "open_volume_mixer");
+    {
+        let Some(target) = system32_exe("SndVol.exe") else {
+            tracing::warn!("open_volume_mixer: System32 path unavailable");
+            crate::platform::dialog::show_msgbox(err_msg);
+            return;
+        };
+        let target = target.to_string_lossy();
+        open_system_tool(target.as_ref(), None, err_msg, "open_volume_mixer");
+    }
     #[cfg(not(windows))]
     let _ = err_msg;
 }
@@ -218,7 +255,20 @@ pub(crate) fn open_volume_mixer(err_msg: &str) {
 /// Open the system sound settings. `err_msg` is shown when launching fails.
 pub(crate) fn open_sound_settings(err_msg: &str) {
     #[cfg(windows)]
-    open_system_tool("control", Some("mmsys.cpl"), err_msg, "open_sound_settings");
+    {
+        let Some(target) = system32_exe("control.exe") else {
+            tracing::warn!("open_sound_settings: System32 path unavailable");
+            crate::platform::dialog::show_msgbox(err_msg);
+            return;
+        };
+        let target = target.to_string_lossy();
+        open_system_tool(
+            target.as_ref(),
+            Some("mmsys.cpl"),
+            err_msg,
+            "open_sound_settings",
+        );
+    }
     #[cfg(not(windows))]
     let _ = err_msg;
 }

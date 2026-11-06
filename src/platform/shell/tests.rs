@@ -27,6 +27,26 @@ fn url_scheme_gate() {
     );
 }
 
+/// A bare name would let a planted executable beside the portable exe run
+/// instead of the system one; the resolver must always produce an absolute
+/// path under `System32`.
+#[test]
+#[cfg(windows)]
+fn system_tools_resolve_to_absolute_system32_paths() {
+    for name in ["schtasks.exe", "SndVol.exe", "control.exe"] {
+        let path = system32_exe(name).unwrap_or_else(|| panic!("{name}: no System32 path"));
+        assert!(path.is_absolute(), "{name}: {}", path.display());
+        assert!(path.exists(), "{name}: {}", path.display());
+        assert!(
+            path.to_string_lossy()
+                .to_ascii_lowercase()
+                .contains("\\system32\\"),
+            "{name}: {} is not under System32",
+            path.display()
+        );
+    }
+}
+
 #[cfg(windows)]
 mod centring {
     use super::*;
