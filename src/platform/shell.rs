@@ -140,13 +140,15 @@ pub(crate) fn execute_runas(target_w: &[u16], params_w: &[u16]) -> Result<(), Sh
     })
 }
 
-/// Explicit working directory for `ShellExecuteW`: the exe parent, falling
-/// back to the system root when the exe path is unknown.
+/// Explicit working directory for `ShellExecuteW`: `System32`, falling back to
+/// the system root when it cannot be resolved.
+///
+/// Not the portable exe's folder: the shell's DLL search includes the working
+/// directory, and that folder is user-writable.
 #[cfg(windows)]
 fn working_dir_wide() -> Vec<u16> {
-    let dir = crate::platform::autostart::get_exe_path()
-        .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
-        .map_or_else(|| r"C:\".to_string(), |p| p.to_string_lossy().to_string());
+    let dir =
+        system32_dir().map_or_else(|| r"C:\".to_string(), |p| p.to_string_lossy().to_string());
     super::utf16::wide_z(&dir)
 }
 
@@ -184,7 +186,7 @@ pub(crate) fn open_url(url: &Url, err_msg: &str) {
     }
 }
 
-/// Full path to a system executable in `%SystemRoot%\System32`.
+/// Full path to `%SystemRoot%\System32`.
 ///
 /// Never a bare name: `CreateProcessW` and `ShellExecuteW` search the process's
 /// own directory first, and this exe is portable — a writable folder beside it
@@ -192,7 +194,7 @@ pub(crate) fn open_url(url: &Url, err_msg: &str) {
 /// autostart helper that would run the planted binary with administrator rights.
 #[cfg(windows)]
 #[must_use]
-pub(crate) fn system32_exe(name: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn system32_dir() -> Option<std::path::PathBuf> {
     use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 
     let mut buf = [0u16; 260];
@@ -203,7 +205,23 @@ pub(crate) fn system32_exe(name: &str) -> Option<std::path::PathBuf> {
     if len == 0 || len >= buf.len() {
         return None;
     }
-    Some(std::path::PathBuf::from(String::from_utf16_lossy(&buf[..len])).join(name))
+    Some(std::path::PathBuf::from(String::from_utf16_lossy(
+        &buf[..len],
+    )))
+}
+
+/// Non-Windows stub: there is no `System32` to resolve.
+#[cfg(not(windows))]
+#[must_use]
+pub(crate) fn system32_dir() -> Option<std::path::PathBuf> {
+    None
+}
+
+/// Full path to a system executable in [`system32_dir`].
+#[cfg(windows)]
+#[must_use]
+pub(crate) fn system32_exe(name: &str) -> Option<std::path::PathBuf> {
+    system32_dir().map(|dir| dir.join(name))
 }
 
 /// Non-Windows stub: there is no `System32` to resolve.
