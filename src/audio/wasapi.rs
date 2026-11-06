@@ -488,12 +488,12 @@ impl AudioBackend for WasapiBackend {
                     // at the endpoint boundary (read fault, aborted connection);
                     // every other failure is treated as permanent.
                     let hr = e.code().0 as u32;
-                    if (hr == 0x8007_001E || hr == 0x8007_04D4)
-                        && vol
+                    if hr == 0x8007_001E || hr == 0x8007_04D4 {
+                        // Report the retry's error, not the first one: the log
+                        // must name the failure that actually stuck.
+                        return vol
                             .SetMasterVolumeLevelScalar(v, &raw const SELF_EVENT_CONTEXT)
-                            .is_ok()
-                    {
-                        return Ok(());
+                            .map_err(AudioError::from);
                     }
                     Err(e.into())
                 }
