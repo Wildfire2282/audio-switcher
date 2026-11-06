@@ -32,5 +32,6 @@ Desktop.ini
 .env.*
 !.env.example
 
-# Local reference checklists (not part of repo)
-references/
+# Local reference checklists (not part of repo); anchored so a skill's own
+# `references/` folder under .agents/skills/<name>/ stays tracked
+/references/
