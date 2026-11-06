@@ -51,7 +51,10 @@ pub(super) fn wait_for_task(present: bool) -> Result<(), AutostartError> {
             return Ok(());
         }
         if std::time::Instant::now() >= deadline {
-            set_admin_task_cached(None);
+            // A timed-out confirmation is not proof of absence: the helper may
+            // still be finishing. Ask once more so the menu shows the last
+            // observed state instead of staying grayed out until the next start.
+            let _ = admin_task_live();
             return Err(AutostartError::Task {
                 action: if present { "create" } else { "delete" },
                 detail: "the elevated helper's task change was not confirmed".to_string(),

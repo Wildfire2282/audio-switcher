@@ -254,6 +254,10 @@ impl<B: AudioBackend> App<B> {
             }
             Err(e) => {
                 tracing::warn!("set_autostart_mode failed: {e}");
+                // A partial change (task created, Run value not removed) must
+                // show up in the menu; the cached task presence may be stale.
+                crate::platform::refresh_admin_task_cache();
+                self.refresh_ui();
                 crate::platform::dialog::show_msgbox(&format!(
                     "{}: {e}",
                     crate::ui::i18n::tr("autostart_error", self.lang())
