@@ -216,7 +216,11 @@ fn check_entries(
             let key = MenuHandles::sanitize_id(&dev.id);
             let item = CheckMenuItem::with_id(
                 format!("{prefix}{key}"),
-                truncate_label(&dev.name, MAX_LABEL_CHARS),
+                // Win32 reads `&` in a menu label as a mnemonic prefix, so a
+                // device renamed `Game & Chat` would lose the ampersand and
+                // gain an accelerator; muda documents `&&` for a literal one.
+                // The overlay draws with `DT_NOPREFIX`, so it is unaffected.
+                truncate_label(&dev.name, MAX_LABEL_CHARS).replace('&', "&&"),
                 true,
                 checked,
                 None,

@@ -461,6 +461,37 @@ fn presets_stay_clickable_while_the_cap_is_off() {
     );
 }
 
+/// A device name is user-editable and may contain `&`. Win32 menus treat it as
+/// a mnemonic prefix, so the raw label would render `Game _Chat` and gain an
+/// accelerator key; muda asks for the literal form `&&`.
+#[test]
+fn device_labels_escape_the_win32_mnemonic() {
+    let cfg = test_cfg();
+    let devices = vec![AudioDevice {
+        id: "a".into(),
+        name: "Game & Chat".into(),
+    }];
+    let base = MenuState {
+        cfg: &cfg,
+        devices: &devices,
+        default_id: Some("a"),
+        inputs: &[],
+        default_input_id: None,
+        muted: false,
+        autostart: Some(AutostartMode::Off),
+        ui_lang: Lang::En,
+    };
+    let handles = build_menu(&base).expect("menu builds");
+    assert_eq!(
+        handles.device_items[0].2.text(),
+        "Game && Chat",
+        "the ampersand must reach Win32 escaped"
+    );
+    // Change detection still compares the raw name, so an unchanged device
+    // never forces a rebuild.
+    assert_eq!(handles.device_items[0].1, "Game & Chat");
+}
+
 #[test]
 fn empty_enumeration_shows_placeholder() {
     let cfg = test_cfg();
