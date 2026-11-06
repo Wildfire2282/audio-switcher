@@ -27,6 +27,31 @@ pub(super) fn set_admin_task_cached(present: bool) {
     );
 }
 
+/// How long the parent waits for the elevated helper's task write to land.
+///
+/// The helper is a second process: `ShellExecuteW` only reports that it started,
+/// so the task's presence is the success signal the parent can actually see.
+const TASK_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Poll interval while confirming; every poll spawns `schtasks`.
+const TASK_CONFIRM_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Whether the task reaches `present` before [`TASK_CONFIRM_TIMEOUT`].
+///
+/// A failed query counts as "not there yet": the helper may still be writing,
+/// and only a confirmed state may update the cache or drop the `Run` value.
+pub(super) fn wait_for_task(present: bool) -> bool {
+    let deadline = std::time::Instant::now() + TASK_CONFIRM_TIMEOUT;
+    loop {
+        if task_exists().is_ok_and(|exists| exists == present) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(TASK_CONFIRM_POLL);
+    }
+}
+
 /// Query `schtasks` for the task, refreshing the cache.
 ///
 /// Never fails: a query error falls back to the cached state, because the caller
@@ -47,7 +72,7 @@ pub(super) fn admin_task_live() -> bool {
 
 /// Refresh the scheduled-task cache. Called once at startup from a worker
 /// thread; `schtasks` is too slow for the menu's refresh path.
-pub fn refresh_admin_task_cache() {
+pub(crate) fn refresh_admin_task_cache() {
     match task_exists() {
         Ok(present) => set_admin_task_cached(present),
         // The stale cache only mis-reports the tray menu's autostart group, so
@@ -64,6 +89,12 @@ pub(super) fn remove_admin_task() -> Result<(), AutostartError> {
         return Ok(());
     }
     run_helper(HELPER_TASK_OFF)?;
+    if !wait_for_task(false) {
+        return Err(AutostartError::Task {
+            action: "delete",
+            detail: "the elevated helper did not remove the task".to_string(),
+        });
+    }
     set_admin_task_cached(false);
     Ok(())
 }

@@ -26,7 +26,7 @@ mod task;
 pub(super) use run_value::*;
 pub(super) use task::*;
 
-pub use task::refresh_admin_task_cache;
+pub(crate) use task::refresh_admin_task_cache;
 
 use std::path::PathBuf;
 
@@ -48,7 +48,7 @@ pub enum AutostartMode {
 
 /// Autostart failure. The `#[error]` text is the user-visible message.
 #[derive(Debug, Error)]
-pub enum AutostartError {
+pub(crate) enum AutostartError {
     #[error("cannot determine executable path")]
     NoExePath,
     #[error("failed to enable autostart")]
@@ -74,7 +74,7 @@ pub enum AutostartError {
 /// Read-back of the autostart setting; the menu renders it and never writes on
 /// `Unknown`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AutostartState {
+pub(crate) enum AutostartState {
     Off,
     User,
     Admin,
@@ -88,7 +88,7 @@ impl AutostartState {
     /// The single place the read-back becomes a mode: `ui` renders `None` as the
     /// grayed group and never guesses one.
     #[must_use]
-    pub fn mode(&self) -> Option<AutostartMode> {
+    pub(crate) fn mode(&self) -> Option<AutostartMode> {
         match self {
             Self::Off => Some(AutostartMode::Off),
             Self::User => Some(AutostartMode::User),
@@ -104,15 +104,15 @@ impl AutostartState {
 /// Borrowed, not owned: [`autostart_state`] runs on every menu refresh and the
 /// name is a `'static` constant, so allocating here would be pure churn.
 #[must_use]
-pub fn autostart_key_name() -> &'static str {
+pub(crate) fn autostart_key_name() -> &'static str {
     crate::TOOL_DISPLAY_NAME
 }
 
 /// Command-line switch that turns this process into the elevated helper.
-pub const HELPER_ARG_PREFIX: &str = "--autostart-helper=";
+pub(crate) const HELPER_ARG_PREFIX: &str = "--autostart-helper=";
 
 #[must_use]
-pub fn get_exe_path() -> Option<PathBuf> {
+pub(crate) fn get_exe_path() -> Option<PathBuf> {
     std::env::current_exe().ok()
 }
 
@@ -121,7 +121,7 @@ pub fn get_exe_path() -> Option<PathBuf> {
 /// A read failure is `Unknown`, never `Off`: the caller grays the UI out and must
 /// not write.
 #[must_use]
-pub fn autostart_state() -> AutostartState {
+pub(crate) fn autostart_state() -> AutostartState {
     match run_value_state() {
         Ok(RunEntry::Enabled) => AutostartState::User,
         // A `Run` value the shell has switched off is not autostarting, so the
@@ -145,7 +145,7 @@ pub fn autostart_state() -> AutostartState {
 /// is not "absent" either — a value this tool cannot read is not one it may
 /// overwrite.
 #[must_use]
-pub fn run_entry_absent() -> bool {
+pub(crate) fn run_entry_absent() -> bool {
     matches!(run_value_state(), Ok(RunEntry::Absent))
 }
 
@@ -161,7 +161,7 @@ pub fn run_entry_absent() -> bool {
 ///
 /// [`AutostartError`] when the exe path is unknown, a registry write fails,
 /// elevation was declined, or `schtasks` fails inside the helper.
-pub fn set_autostart_mode(mode: AutostartMode) -> Result<(), AutostartError> {
+pub(crate) fn set_autostart_mode(mode: AutostartMode) -> Result<(), AutostartError> {
     match mode {
         AutostartMode::Off => {
             remove_admin_task()?;
@@ -173,8 +173,16 @@ pub fn set_autostart_mode(mode: AutostartMode) -> Result<(), AutostartError> {
         }
         AutostartMode::Admin => {
             // Create first: a failure here must leave the existing `Run` entry
-            // alone rather than dropping the user to "no autostart at all".
+            // alone rather than dropping the user to "no autostart at all". The
+            // helper is a separate process whose own `schtasks` can fail, so
+            // the task has to exist before the `Run` value is removed.
             run_helper(HELPER_TASK_ON)?;
+            if !wait_for_task(true) {
+                return Err(AutostartError::Task {
+                    action: "create",
+                    detail: "the elevated helper did not create the task".to_string(),
+                });
+            }
             set_admin_task_cached(true);
             set_run_value(false)
         }
