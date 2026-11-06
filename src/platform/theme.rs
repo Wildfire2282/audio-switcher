@@ -108,6 +108,11 @@ fn read_dword(subkey: &str, value: &str) -> Option<u32> {
     unsafe {
         let _ = RegCloseKey(hkey);
     }
+    if read == ERROR_FILE_NOT_FOUND {
+        // A missing value is "not configured", not a fault.
+        tracing::debug!("appearance: {subkey}\\{value} absent; using the default");
+        return None;
+    }
     if read.is_err() {
         tracing::warn!("appearance: cannot read {subkey}\\{value}: {read:?}");
         return None;
