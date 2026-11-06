@@ -58,6 +58,7 @@ fn accent_from_abgr(raw: u32) -> (u8, u8, u8) {
 /// value of another type, or a failed read.
 #[cfg(windows)]
 fn read_dword(subkey: &str, value: &str) -> Option<u32> {
+    use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
     use windows::Win32::System::Registry::{
         HKEY, HKEY_CURRENT_USER, KEY_READ, REG_DWORD, REG_VALUE_TYPE, RegCloseKey, RegOpenKeyExW,
         RegQueryValueExW,
@@ -81,7 +82,11 @@ fn read_dword(subkey: &str, value: &str) -> Option<u32> {
     if opened.is_err() {
         // A missing key is "not configured" and normal; a present-but-unopenable
         // one is not, and only the code tells them apart.
-        tracing::warn!("appearance: cannot open HKCU\\{subkey}: {opened:?}");
+        if opened == ERROR_FILE_NOT_FOUND {
+            tracing::debug!("appearance: HKCU\\{subkey} absent; using the default appearance");
+        } else {
+            tracing::warn!("appearance: cannot open HKCU\\{subkey}: {opened:?}");
+        }
         return None;
     }
     let mut data = 0u32;

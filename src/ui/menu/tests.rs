@@ -409,6 +409,59 @@ fn set_muted_moves_only_the_mute_check() {
 }
 
 #[test]
+fn presets_stay_clickable_while_the_cap_is_off() {
+    // `apply_menu_config` switches the cap on when a preset is picked, and a
+    // disabled menu item never raises `MenuEvent`: graying the presets while
+    // the cap is off made that documented path unreachable.
+    let cfg = AppConfig {
+        volume_limit_enabled: false,
+        volume_limit: 50,
+        ..test_cfg()
+    };
+    let base = MenuState {
+        cfg: &cfg,
+        devices: &[],
+        default_id: None,
+        inputs: &[],
+        default_input_id: None,
+        muted: false,
+        autostart: Some(AutostartMode::Off),
+        ui_lang: Lang::En,
+    };
+    let mut handles = build_menu(&base).expect("menu builds");
+    for (preset, item) in &handles.vol_items {
+        assert!(
+            item.is_enabled(),
+            "{preset}% unclickable while the cap is off"
+        );
+        assert!(!item.is_checked(), "{preset}% checked while the cap is off");
+    }
+    // The in-place sync path must not gray them either.
+    let capped = AppConfig {
+        volume_limit_enabled: true,
+        volume_limit: 50,
+        ..test_cfg()
+    };
+    assert!(handles.sync_state(&MenuState {
+        cfg: &capped,
+        ..base
+    }));
+    for (preset, item) in &handles.vol_items {
+        assert!(
+            item.is_enabled(),
+            "{preset}% unclickable while the cap is on"
+        );
+    }
+    assert!(
+        handles
+            .vol_items
+            .iter()
+            .any(|(preset, item)| *preset == 50 && item.is_checked()),
+        "the stored preset must show as checked once the cap is on"
+    );
+}
+
+#[test]
 fn empty_enumeration_shows_placeholder() {
     let cfg = test_cfg();
     let base = MenuState {

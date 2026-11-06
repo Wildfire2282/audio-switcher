@@ -70,8 +70,11 @@ pub(super) fn admin_task_live() -> bool {
     }
 }
 
-/// Refresh the scheduled-task cache. Called once at startup from a worker
-/// thread; `schtasks` is too slow for the menu's refresh path.
+/// Refresh the scheduled-task cache.
+///
+/// Runs once at startup, on the message-loop thread before the loop starts:
+/// `schtasks` costs a process launch, which is why the menu reads this cache
+/// instead of querying. Callers must not add it to a per-frame path.
 pub(crate) fn refresh_admin_task_cache() {
     match task_exists() {
         Ok(present) => set_admin_task_cached(present),

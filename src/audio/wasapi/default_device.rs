@@ -23,9 +23,9 @@ type SetDefaultEndpointFn =
 /// initialized on this thread. Offsets are probed per candidate: only the
 /// primary offset with `S_OK` counts, so a mis-probe surfaces as an error
 /// never as an out-of-bounds vtable read, and never as a call into a method
-/// the object was not asked for: every slot read below is null-checked first,
-/// and a candidate whose IID `QueryInterface` refuses is skipped rather than
-/// called blind.
+/// the object was not asked for: the vtable pointer and the primary-offset
+/// slot are null-checked before the call, and a candidate whose IID
+/// `QueryInterface` refuses is skipped rather than called blind.
 #[cfg(windows)]
 pub(super) unsafe fn set_default_endpoint_raw(
     device_id: &str,
@@ -108,11 +108,20 @@ pub(super) unsafe fn set_default_endpoint_raw(
                     // SAFETY: primary offset holds SetDefaultEndpoint for the
                     // candidate IID by the header contract above; a mismatch
                     // fails the HRESULT check and is never treated as success.
-                    let func: SetDefaultEndpointFn =
-                        unsafe { std::mem::transmute(*vtbl_iface.add(primary_off)) };
-                    // SAFETY: `iface` is live until the Release below; `wide`
-                    // outlives the call.
-                    let hr = unsafe { func(iface, PCWSTR(wide.as_ptr()), role) };
+                    let slot = unsafe { *vtbl_iface.add(primary_off) };
+                    let hr = if slot.is_null() {
+                        // Calling a null slot would be a jump to address zero,
+                        // so a candidate that has none is reported exactly like
+                        // a refused QI.
+                        windows::core::HRESULT(0x8000_4002_u32 as i32)
+                    } else {
+                        // SAFETY: `slot` is the non-null primary-offset method
+                        // for this IID by the header contract above.
+                        let func: SetDefaultEndpointFn = unsafe { std::mem::transmute(slot) };
+                        // SAFETY: `iface` is live until the Release below and
+                        // `wide` outlives the call.
+                        unsafe { func(iface, PCWSTR(wide.as_ptr()), role) }
+                    };
                     // SAFETY: slot 2 of any COM vtable is IUnknown::Release; the
                     // pointer comes from the live interface `iface`.
                     let rel: ReleaseFn = unsafe { std::mem::transmute(*vtbl_iface.add(2)) };

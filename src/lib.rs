@@ -125,6 +125,10 @@ pub fn single_instance_id() -> String {
 
 /// Derive the PascalCase display name from a kebab-case tool id
 /// (`"audio-switcher"` → `"AudioSwitcher"`).
+///
+/// Test-only: [`TOOL_DISPLAY_NAME`] is the stored literal, and this is what
+/// pins it to [`TOOL_ID`] so the autostart name cannot silently orphan.
+#[cfg(test)]
 #[must_use]
 pub fn display_name_for(kebab: &str) -> String {
     kebab

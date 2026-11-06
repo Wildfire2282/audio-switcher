@@ -187,8 +187,9 @@ impl MenuHandles {
         }
         self.mute.set_checked(muted);
         self.vol_enabled.set_checked(cfg.volume_limit_enabled);
+        // The presets stay enabled while the cap is off (they are the on
+        // switch); only the check mark follows the cap.
         for (preset, item) in &self.vol_items {
-            item.set_enabled(cfg.volume_limit_enabled);
             item.set_checked(cfg.volume_limit_enabled && cfg.volume_limit == *preset);
         }
         self.apply_autostart(autostart, ui_lang);
@@ -401,7 +402,9 @@ fn append_features(menu: &Menu, state: &MenuState<'_>) -> Result<FeatureGroup, m
                 CheckMenuItem::with_id(
                     id::vol_preset(*preset),
                     format!("{preset}%"),
-                    cfg.volume_limit_enabled,
+                    // Always clickable: picking a preset is how the cap is
+                    // switched on, and a disabled item never emits an event.
+                    true,
                     cfg.volume_limit == *preset && cfg.volume_limit_enabled,
                     None,
                 ),
