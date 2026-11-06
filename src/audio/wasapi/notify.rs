@@ -412,9 +412,9 @@ pub(super) fn spawn_volume_notify_worker() {
                 }
             }
         });
-    // Latched only once the thread exists: a failed spawn must stay retryable
-    // (the next `WasapiBackend::new` asks again), or external volume changes
-    // go dark for the process lifetime.
+    // Latched only once the thread exists, so a failed spawn stays retryable
+    // (`WasapiBackend` construction and the menu's Refresh both ask again), or
+    // external volume changes go dark for the process lifetime.
     match spawned {
         Ok(_thread) => {
             STARTED.store(true, AtomicOrdering::Release);

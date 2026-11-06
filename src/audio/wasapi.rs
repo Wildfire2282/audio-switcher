@@ -95,8 +95,10 @@ impl WasapiBackend {
         // Both registrations ride proxies owned by the `audiosrv` instance that
         // created them, so a restarted service kills them even though the
         // interface objects still exist. Re-register both here; this is the
-        // recovery the menu's Refresh offers.
+        // recovery the menu's Refresh offers. The worker spawn is a no-op once
+        // it runs, and a spawn that failed at startup is otherwise permanent.
         let _ = register_notification_client();
+        spawn_volume_notify_worker();
         request_volume_reregister();
     }
 

@@ -152,12 +152,22 @@ impl<B: AudioBackend> App<B> {
         }
         self.refresh_ui();
     }
-    /// External volume/mute change (media keys, other apps) — refresh the
-    /// cached state and the tray icon without touching the menu.
+    /// External volume/mute change (media keys, other apps) — hold it to the
+    /// volume limit, then refresh the cached state and the tray icon without
+    /// touching the menu.
     pub(super) fn poll_volume_state(&mut self) {
-        if self.backend.take_volume_changed() {
-            self.resync_volume_state();
+        if !self.backend.take_volume_changed() {
+            return;
         }
+        // A media key or another app raising the volume passes the cap, and
+        // this notification is the only trigger that ever sees it: without the
+        // clamp the cap stays broken until some unrelated refresh. It runs
+        // before the resync so the overlay never paints a value the cap takes
+        // back in the same frame.
+        if let Err(e) = self.backend.clamp_volume_if_needed(&self.cfg) {
+            tracing::warn!("volume clamp failed after an external change: {e}");
+        }
+        self.resync_volume_state();
     }
     /// Drain global hotkeys pressed since the last frame.
     pub(super) fn poll_hotkeys(&mut self) {
