@@ -36,6 +36,6 @@
 ## 打包与发布
 
 - `dist/` 只保留当前发布件：`audio-switcher-v<版本>-x64.exe` 与同名 `.sha256`（小写哈希、两空格、裸文件名）。打包前先杀掉残留实例。
-- 发布描述放 `.github/release-notes/<tag>.md`：不写哈希与体积，不从 commit log 生成；格式由 `tests/architecture.rs` 校验。
+- 发布描述放 `.github/release-notes/<tag>.md`：先写完所有中文小节，再写英文小节，两边小节名与顺序一一对应；不写哈希与体积，不从 commit log 生成；格式由 `tests/architecture.rs` 校验。
 - CI 负责打包与发布：推 `v*` tag 或手动 `workflow_dispatch`；`release` job 依赖 `gate`，门禁不过不发布。
 - 本机启用提交门禁：`git config core.hooksPath .githooks`；每个 clone 一次。
