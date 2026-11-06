@@ -284,10 +284,13 @@ fn center(hwnd: isize) {
     }
 }
 
-/// Centre the app's own dialog with this title once it appears.
+/// Centre the app's own message box with this title once it appears.
+///
+/// The class check keeps a same-titled window from another process from being
+/// moved by mistake.
 #[cfg(windows)]
 fn center_soon(title: String) {
     center_when_found(std::time::Duration::from_secs(2), move |hwnd| {
-        window_title(hwnd) == title
+        class_is(hwnd, "#32770") && window_title(hwnd) == title
     });
 }
