@@ -194,12 +194,8 @@ impl<B: AudioBackend> App<B> {
     /// Switch the default output device, then re-apply the volume limit.
     pub(super) fn set_default_output(&mut self, id: &str) {
         match self.backend.set_default_device(id) {
-            Ok(()) => {
-                if let Err(e) = self.backend.clamp_volume_if_needed(&self.cfg) {
-                    tracing::warn!("volume clamp failed: {e}");
-                }
-                self.refresh_ui();
-            }
+            // `refresh_ui` reads the new endpoint and applies the limit to it.
+            Ok(()) => self.refresh_ui(),
             Err(e) => {
                 tracing::warn!("set_default_device failed: {e}");
                 crate::platform::dialog::show_msgbox(&format!(

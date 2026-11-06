@@ -147,9 +147,8 @@ impl<B: AudioBackend> App<B> {
         }
         self.devices_pending = false;
         self.last_devices_rebuild = Instant::now();
-        if let Err(e) = self.backend.clamp_volume_if_needed(&self.cfg) {
-            tracing::warn!("volume clamp failed: {e}");
-        }
+        // `refresh_ui`'s snapshot applies the volume limit to what it is about
+        // to read, so a second clamp pass here would only re-read the endpoint.
         self.refresh_ui();
     }
     /// External volume/mute change (media keys, other apps) — hold it to the
