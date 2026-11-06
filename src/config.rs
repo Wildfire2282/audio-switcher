@@ -26,7 +26,7 @@ const CURRENT_VERSION: u32 = 4;
 const LEGACY_DIR_NAME: &str = "AudioSwitcher";
 
 /// Cached config path — computed once per process.
-static CONFIG_PATH_CACHE: LazyLock<(PathBuf, bool)> = LazyLock::new(resolve_config_path);
+static CONFIG_PATH_CACHE: LazyLock<PathBuf> = LazyLock::new(|| resolve_config_path().0);
 
 /// UI language. `System` (the default) follows the OS locale once at startup;
 /// live re-resolution is deferred (no locale listener is installed).
@@ -466,7 +466,7 @@ impl AppConfig {
     /// Returns the cached config file path.
     #[must_use]
     pub fn config_path() -> PathBuf {
-        CONFIG_PATH_CACHE.0.clone()
+        CONFIG_PATH_CACHE.clone()
     }
 
     /// Returns the cached config folder (parent of [`Self::config_path`]).
@@ -477,12 +477,6 @@ impl AppConfig {
             || std::env::temp_dir().join(crate::TOOL_ID),
             Path::to_path_buf,
         )
-    }
-
-    /// Whether the resolved path is the degraded temp fallback (saves warn).
-    #[must_use]
-    pub fn config_degraded() -> bool {
-        CONFIG_PATH_CACHE.1
     }
 
     /// Effective UI language: `System` resolves the OS locale once.
@@ -661,9 +655,6 @@ impl AppConfig {
             return Err(std::io::Error::other(
                 "config could not be read or safely backed up at startup; refusing to overwrite it",
             ));
-        }
-        if Self::config_degraded() {
-            tracing::warn!("saving to degraded temp config path");
         }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
