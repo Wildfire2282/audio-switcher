@@ -9,20 +9,28 @@ pub(super) const HELPER_TASK_ON: &str = "admin-on";
 /// Helper action: delete the elevated logon task.
 pub(super) const HELPER_TASK_OFF: &str = "admin-off";
 
-/// Cached presence of the scheduled task: see [`admin_task_cached`].
-const TASK_ABSENT: u8 = 0;
-const TASK_PRESENT: u8 = 1;
-static ADMIN_TASK: AtomicU8 = AtomicU8::new(TASK_ABSENT);
+/// No successful query has established the task's current presence.
+const TASK_UNKNOWN: u8 = 0;
+const TASK_ABSENT: u8 = 1;
+const TASK_PRESENT: u8 = 2;
+static ADMIN_TASK: AtomicU8 = AtomicU8::new(TASK_UNKNOWN);
 
-/// Whether the scheduled task is present, per the cache.
-pub(super) fn admin_task_cached() -> bool {
-    ADMIN_TASK.load(Ordering::Acquire) == TASK_PRESENT
+/// Cached task presence; a failed query invalidates the last observation.
+pub(super) fn admin_task_cached() -> Option<bool> {
+    match ADMIN_TASK.load(Ordering::Acquire) {
+        TASK_ABSENT => Some(false),
+        TASK_PRESENT => Some(true),
+        _ => None,
+    }
 }
 
-/// Mark the task cache state directly (e.g. after successful task operations).
-pub(super) fn set_admin_task_cached(present: bool) {
+pub(super) fn set_admin_task_cached(present: Option<bool>) {
     ADMIN_TASK.store(
-        if present { TASK_PRESENT } else { TASK_ABSENT },
+        match present {
+            Some(false) => TASK_ABSENT,
+            Some(true) => TASK_PRESENT,
+            None => TASK_UNKNOWN,
+        },
         Ordering::Release,
     );
 }
@@ -35,39 +43,29 @@ const TASK_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 /// Poll interval while confirming; every poll spawns `schtasks`.
 const TASK_CONFIRM_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 
-/// Whether the task reaches `present` before [`TASK_CONFIRM_TIMEOUT`].
-///
-/// A failed query counts as "not there yet": the helper may still be writing,
-/// and only a confirmed state may update the cache or drop the `Run` value.
-pub(super) fn wait_for_task(present: bool) -> bool {
+/// Confirm the helper's write using successful live queries only.
+pub(super) fn wait_for_task(present: bool) -> Result<(), AutostartError> {
     let deadline = std::time::Instant::now() + TASK_CONFIRM_TIMEOUT;
     loop {
-        if task_exists().is_ok_and(|exists| exists == present) {
-            return true;
+        if admin_task_live()? == present {
+            return Ok(());
         }
         if std::time::Instant::now() >= deadline {
-            return false;
+            set_admin_task_cached(None);
+            return Err(AutostartError::Task {
+                action: if present { "create" } else { "delete" },
+                detail: "the elevated helper's task change was not confirmed".to_string(),
+            });
         }
         std::thread::sleep(TASK_CONFIRM_POLL);
     }
 }
 
-/// Query `schtasks` for the task, refreshing the cache.
-///
-/// Never fails: a query error falls back to the cached state, because the caller
-/// is deciding whether to delete something and neither "delete blindly" nor
-/// "skip blindly" beats the cache.
-pub(super) fn admin_task_live() -> bool {
-    match task_exists() {
-        Ok(present) => {
-            set_admin_task_cached(present);
-            present
-        }
-        Err(e) => {
-            tracing::warn!("scheduled task query failed ({e}); using cached state");
-            admin_task_cached()
-        }
-    }
+/// Refresh the cache without turning a failed live query into write permission.
+pub(super) fn admin_task_live() -> Result<bool, AutostartError> {
+    let result = task_exists();
+    set_admin_task_cached(result.as_ref().ok().copied());
+    result
 }
 
 /// Refresh the scheduled-task cache.
@@ -76,35 +74,30 @@ pub(super) fn admin_task_live() -> bool {
 /// `schtasks` costs a process launch, which is why the menu reads this cache
 /// instead of querying. Callers must not add it to a per-frame path.
 pub(crate) fn refresh_admin_task_cache() {
-    match task_exists() {
-        Ok(present) => set_admin_task_cached(present),
-        // The stale cache only mis-reports the tray menu's autostart group, so
-        // this is a warning rather than a failure — but a silent one left the
-        // group permanently grayed with nothing to read.
-        Err(e) => tracing::warn!("scheduled task query failed ({e}); cache unchanged"),
+    if let Err(e) = admin_task_live() {
+        tracing::warn!("scheduled task query failed ({e}); state unknown");
     }
 }
 
 /// Delete the scheduled task through one elevated helper instance, unless it is
 /// already known to be absent.
 pub(super) fn remove_admin_task() -> Result<(), AutostartError> {
-    if !admin_task_live() {
+    if !admin_task_live()? {
         return Ok(());
     }
     run_helper(HELPER_TASK_OFF)?;
-    if !wait_for_task(false) {
-        return Err(AutostartError::Task {
-            action: "delete",
-            detail: "the elevated helper did not remove the task".to_string(),
-        });
-    }
-    set_admin_task_cached(false);
+    set_admin_task_cached(None);
+    wait_for_task(false)?;
     Ok(())
 }
 
 /// Re-launch ourselves elevated with the helper switch. Blocks until the prompt
 /// is answered, so callers run it off the message loop's hot path.
 pub(super) fn run_helper(action: &str) -> Result<(), AutostartError> {
+    #[cfg(test)]
+    if let Some(result) = super::tests::helper_result(action) {
+        return result;
+    }
     #[cfg(windows)]
     {
         let exe = get_exe_path().ok_or(AutostartError::NoExePath)?;
@@ -169,15 +162,97 @@ pub(super) fn delete_task() -> Result<(), AutostartError> {
     }
 }
 
-/// Whether the logon task exists.
+/// Query one task with locale-independent HRESULT failure classification.
 pub(super) fn task_exists() -> Result<bool, AutostartError> {
-    let name = autostart_key_name();
-    run_schtasks(&["/Query", "/TN", name])
-        .map(|out| out.status.success())
-        .map_err(|e| AutostartError::Task {
+    #[cfg(test)]
+    if let Some(result) = super::tests::task_query_result() {
+        return result;
+    }
+    let out = run_schtasks(&[
+        "/Query",
+        "/TN",
+        autostart_key_name(),
+        "/FO",
+        "CSV",
+        "/NH",
+        "/HRESULT",
+    ])
+    .map_err(|e| AutostartError::Task {
+        action: "query",
+        detail: e.to_string(),
+    })?;
+    classify_query_result(&out, out.status.code())
+}
+
+pub(super) fn classify_query_result(
+    out: &std::process::Output,
+    code: Option<i32>,
+) -> Result<bool, AutostartError> {
+    // /HRESULT preserves ERROR_FILE_NOT_FOUND instead of collapsing all errors
+    // to exit code 1; access denied and unavailable services remain errors.
+    const TASK_NOT_FOUND: i32 = 0x8007_0002u32 as i32;
+    if code == Some(TASK_NOT_FOUND) {
+        return Ok(false);
+    }
+    if code != Some(0) || !out.stderr.is_empty() {
+        return Err(AutostartError::Task {
             action: "query",
-            detail: e.to_string(),
-        })
+            detail: describe(out),
+        });
+    }
+    if !valid_task_rows(&out.stdout) {
+        return Err(AutostartError::Task {
+            action: "query",
+            detail: "unexpected schtasks CSV response".to_string(),
+        });
+    }
+    Ok(true)
+}
+
+/// /FO CSV /NH has three quoted columns; localized field bytes stay opaque.
+fn valid_task_rows(stdout: &[u8]) -> bool {
+    let mut found = false;
+    for row in stdout.split(|&byte| byte == b'\n') {
+        let row = row.strip_suffix(b"\r").unwrap_or(row);
+        if row.is_empty() {
+            continue;
+        }
+        let Some((name, rest)) = csv_field(row) else {
+            return false;
+        };
+        if !name
+            .strip_prefix(b"\\")
+            .is_some_and(|name| name.eq_ignore_ascii_case(autostart_key_name().as_bytes()))
+        {
+            return false;
+        }
+        let Some((_, rest)) = rest.strip_prefix(b",").and_then(csv_field) else {
+            return false;
+        };
+        let Some((_, rest)) = rest.strip_prefix(b",").and_then(csv_field) else {
+            return false;
+        };
+        if !rest.is_empty() {
+            return false;
+        }
+        found = true;
+    }
+    found
+}
+
+fn csv_field(input: &[u8]) -> Option<(&[u8], &[u8])> {
+    let input = input.strip_prefix(b"\"")?;
+    let mut index = 0;
+    while index < input.len() {
+        if input[index] == b'"' {
+            if input.get(index + 1) != Some(&b'"') {
+                return Some((&input[..index], &input[index + 1..]));
+            }
+            index += 1;
+        }
+        index += 1;
+    }
+    None
 }
 
 /// Failure detail for [`AutostartError::Task`]: the exit code plus whatever
@@ -193,7 +268,15 @@ pub(super) fn describe(out: &std::process::Output) -> String {
     let text = text.trim();
     let code = out.status.code().map_or_else(
         || "terminated without an exit code".to_string(),
-        |c| format!("exit code {c}"),
+        // `/HRESULT` failures arrive as negative HRESULT values; hex is the
+        // form every Windows diagnostic uses for them.
+        |c| {
+            if c < 0 {
+                format!("exit code 0x{:08X}", c as u32)
+            } else {
+                format!("exit code {c}")
+            }
+        },
     );
     if text.is_empty() {
         code

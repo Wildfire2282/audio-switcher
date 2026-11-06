@@ -78,6 +78,10 @@ pub(crate) enum AutostartError {
 /// name is a `'static` constant, so allocating here would be pure churn.
 #[must_use]
 pub(crate) fn autostart_key_name() -> &'static str {
+    #[cfg(test)]
+    if let Some(name) = tests::key_name() {
+        return name;
+    }
     crate::TOOL_DISPLAY_NAME
 }
 
@@ -95,7 +99,15 @@ pub(crate) fn get_exe_path() -> Option<PathBuf> {
 /// not write.
 #[must_use]
 pub(crate) fn autostart_state() -> Option<AutostartMode> {
-    mode_from(run_value_state(), admin_task_cached())
+    mode_from(current_run_state(), admin_task_cached())
+}
+
+fn current_run_state() -> Result<RunEntry, std::io::Error> {
+    #[cfg(test)]
+    if let Some(result) = tests::run_state() {
+        return result;
+    }
+    run_value_state()
 }
 
 /// Map the two independent read-backs to the installed mode.
@@ -105,8 +117,9 @@ pub(crate) fn autostart_state() -> Option<AutostartMode> {
 /// the menu only draws the grayed group.
 fn mode_from(
     run: Result<RunEntry, std::io::Error>,
-    admin_task_present: bool,
+    admin_task_present: Option<bool>,
 ) -> Option<AutostartMode> {
+    let admin_task_present = admin_task_present?;
     match run {
         Ok(RunEntry::Enabled) => Some(AutostartMode::User),
         // A `Run` value the shell has switched off is not autostarting, so the
@@ -139,15 +152,22 @@ pub(crate) fn run_entry_absent() -> bool {
 /// does.
 ///
 /// Switching into or out of [`AutostartMode::Admin`] raises one consent prompt
-/// (see the module docs). The helper is launched asynchronously, so a successful
-/// return means "the helper started", not "the task exists" — the cache is
-/// updated optimistically and the next startup query corrects it.
+/// (see the module docs). Success requires a live read before any mutation and
+/// confirmation of the helper's task change before the `Run` value is removed.
 ///
 /// # Errors
 ///
 /// [`AutostartError`] when the exe path is unknown, a registry write fails,
-/// elevation was declined, or `schtasks` fails inside the helper.
+/// elevation was declined, or the live registry/task state cannot be read.
 pub(crate) fn set_autostart_mode(mode: AutostartMode) -> Result<(), AutostartError> {
+    admin_task_live()?;
+    current_run_state().map_err(|error| {
+        if mode == AutostartMode::Off {
+            AutostartError::Disable(error)
+        } else {
+            AutostartError::Enable(error)
+        }
+    })?;
     match mode {
         AutostartMode::Off => {
             remove_admin_task()?;
@@ -163,13 +183,8 @@ pub(crate) fn set_autostart_mode(mode: AutostartMode) -> Result<(), AutostartErr
             // helper is a separate process whose own `schtasks` can fail, so
             // the task has to exist before the `Run` value is removed.
             run_helper(HELPER_TASK_ON)?;
-            if !wait_for_task(true) {
-                return Err(AutostartError::Task {
-                    action: "create",
-                    detail: "the elevated helper did not create the task".to_string(),
-                });
-            }
-            set_admin_task_cached(true);
+            set_admin_task_cached(None);
+            wait_for_task(true)?;
             set_run_value(false)
         }
     }

@@ -370,6 +370,10 @@ pub(super) fn run_value_state() -> Result<RunEntry, std::io::Error> {
 /// dependency also carried OS detection and a macOS service crate for the two
 /// platforms this tool does not build for.
 pub(super) fn set_run_value(enable: bool) -> Result<(), AutostartError> {
+    #[cfg(test)]
+    if let Some(result) = super::tests::run_write(enable) {
+        return result;
+    }
     let result = if enable {
         enable_run_value()
     } else {
