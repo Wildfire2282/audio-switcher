@@ -31,10 +31,15 @@ impl<B: AudioBackend> App<B> {
         // step's origin away from the endpoint.
         if let Some(volume) = snap.volume {
             self.cached_volume = volume;
-            self.volume_known = true;
         }
         if let Some(mute) = snap.mute {
             self.cached_mute = mute;
+        }
+        // Both values must have been read before the mirror is trusted: a
+        // guessed mute would make the next toggle write the state that is
+        // already there (same rule as the startup snapshot).
+        if snap.volume.is_some() && snap.mute.is_some() {
+            self.volume_known = true;
         }
         let def_id = snap.default_device.as_ref().map(|d| d.id.as_str());
         let def_input_id = snap.default_input_device.as_ref().map(|d| d.id.as_str());
