@@ -14,7 +14,7 @@ pub enum InstanceError {
     /// The OS primitive itself could not be created. The source keeps the
     /// Win32/NUL reason: `CreateMutexW`'s error code was the only clue and
     /// `String` flattened it away.
-    #[error("single-instance guard creation failed")]
+    #[error("single-instance guard creation failed: {0}")]
     CreateFailed(#[source] SingleInstanceError),
 }
 

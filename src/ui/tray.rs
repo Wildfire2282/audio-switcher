@@ -27,17 +27,17 @@ type CachedIconRect = ((i32, i32, i32, i32), std::time::Instant);
 pub enum TrayError {
     /// The underlying `tray-icon` build failed (e.g. Explorer not running).
     /// The source keeps the OS error kind so triage can tell Explorer-down
-    /// apart from a bad icon (`{:#}` renders the full chain).
-    #[error("tray icon build failed")]
+    /// apart from a bad icon; the Display carries it into the startup dialog.
+    #[error("tray icon build failed: {0}")]
     Build(#[from] tray_icon::Error),
     /// The embedded tray RGBA bytes are invalid (deterministic packaging
     /// error, not retried beyond the boot bound).
-    #[error("tray icon invalid")]
+    #[error("tray icon invalid: {0}")]
     Icon(#[from] tray_icon::BadIcon),
     /// A menu entry or submenu could not be created. Win32 menu creation can
     /// fail under resource pressure, so this is reported rather than panicked:
     /// startup dialogs and exits, a runtime rebuild keeps the current menu.
-    #[error("tray menu build failed")]
+    #[error("tray menu build failed: {0}")]
     Menu(#[from] muda::Error),
 }
 

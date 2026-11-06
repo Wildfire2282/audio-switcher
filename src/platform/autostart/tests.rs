@@ -7,6 +7,15 @@
 use super::*;
 
 #[test]
+fn an_autostart_error_names_its_io_cause() {
+    let err = AutostartError::Enable(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "access denied",
+    ));
+    assert!(err.to_string().contains("access denied"), "{err}");
+}
+
+#[test]
 fn key_names_locked() {
     // Renaming the value would orphan every installed Run entry.
     assert_eq!(autostart_key_name(), "AudioSwitcher");

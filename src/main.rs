@@ -31,9 +31,9 @@ fn main() {
     }
 }
 
-/// Show a critical dialog with the full error chain (`{:#}` renders sources)
-/// and exit(1). Guards-only helper; no business logic.
+/// Show a critical dialog with the error's Display (each error type embeds its
+/// cause) and exit(1). Guards-only helper; no business logic.
 fn fatal(message: &str, detail: impl std::fmt::Display) -> ! {
-    show_critical(&format!("{message}\n\nDetails: {detail:#}"));
+    show_critical(&format!("{message}\n\nDetails: {detail}"));
     std::process::exit(1);
 }

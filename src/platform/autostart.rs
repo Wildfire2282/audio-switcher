@@ -51,9 +51,9 @@ pub enum AutostartMode {
 pub(crate) enum AutostartError {
     #[error("cannot determine executable path")]
     NoExePath,
-    #[error("failed to enable autostart")]
+    #[error("failed to enable autostart: {0}")]
     Enable(#[source] std::io::Error),
-    #[error("failed to disable autostart")]
+    #[error("failed to disable autostart: {0}")]
     Disable(#[source] std::io::Error),
     /// The elevated helper never started: the user declined the consent prompt
     /// or the launch itself failed (`ShellExecuteW` returned `<= 32`).
