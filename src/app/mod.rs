@@ -75,9 +75,10 @@ pub struct App<B: AudioBackend = WasapiBackend> {
     /// endpoint back: one notch used to cost three `Activate` round-trips plus a
     /// property-store read purely to redraw feedback.
     cached_volume: u32,
-    /// Whether `cached_volume` came from a successful endpoint read. A failed
-    /// startup read seeds 50 to keep the UI usable; the first step must then
-    /// read the endpoint instead of stepping from that guess.
+    /// Whether `cached_volume` and `cached_mute` came from a successful
+    /// endpoint read. A failed startup read seeds 50/false to keep the UI
+    /// usable; the first gesture must then read the endpoint instead of acting
+    /// on that guess.
     volume_known: bool,
     cached_mute: bool,
     cached_device: Option<AudioDevice>,

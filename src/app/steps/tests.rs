@@ -31,3 +31,33 @@ fn stepped_volume_stays_in_range() {
     assert_eq!(stepped_volume(100, i32::MAX), 100);
     assert_eq!(stepped_volume(0, i32::MIN), 0);
 }
+
+#[test]
+fn a_failed_device_read_keeps_the_last_known_device() {
+    use crate::audio::AudioDevice;
+
+    let current = AudioDevice {
+        id: "a".into(),
+        name: "A".into(),
+    };
+    let other = AudioDevice {
+        id: "b".into(),
+        name: "B".into(),
+    };
+    let devices = [current.clone(), other.clone()];
+
+    // A readable default wins.
+    assert_eq!(
+        next_default_device(Some(current.clone()), Some(other.clone()), &devices),
+        Some(other)
+    );
+    // A non-empty list with no readable default is a transient failure: the
+    // menu check and the overlay name must not vanish.
+    assert_eq!(
+        next_default_device(Some(current.clone()), None, &devices),
+        Some(current.clone())
+    );
+    // An empty list is a real "no endpoints".
+    assert_eq!(next_default_device(Some(current), None, &[]), None);
+    assert_eq!(next_default_device(None, None, &[]), None);
+}

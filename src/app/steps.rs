@@ -24,5 +24,22 @@ pub(super) fn stepped_volume(volume: u32, delta: i32) -> u32 {
     u32::try_from((i64::from(volume) + i64::from(delta)).clamp(0, 100)).unwrap_or(0)
 }
 
+/// The device to mirror after a snapshot.
+///
+/// A readable default wins. A non-empty list with no readable default is a
+/// transient endpoint failure, so the last known device is kept; an empty list
+/// is a real "no endpoints", which clears it.
+#[must_use]
+pub(super) fn next_default_device(
+    current: Option<crate::audio::AudioDevice>,
+    default: Option<crate::audio::AudioDevice>,
+    devices: &[crate::audio::AudioDevice],
+) -> Option<crate::audio::AudioDevice> {
+    if let Some(default) = default {
+        return Some(default);
+    }
+    if devices.is_empty() { None } else { current }
+}
+
 #[cfg(test)]
 mod tests;

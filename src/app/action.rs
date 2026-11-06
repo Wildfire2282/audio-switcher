@@ -17,7 +17,7 @@ use crate::ui::MenuState;
 use crate::ui::i18n::tr;
 use crate::ui::osd::format as format_osd;
 
-use super::steps::{cycle_index, stepped_volume};
+use super::steps::{cycle_index, next_default_device, stepped_volume};
 use super::{App, HOTKEY_VOLUME_STEP};
 
 impl<B: AudioBackend> App<B> {
@@ -50,7 +50,15 @@ impl<B: AudioBackend> App<B> {
             autostart,
             ui_lang: self.ui_lang,
         });
-        self.cached_device.clone_from(&snap.default_device);
+        // A failed snapshot keeps the last known device too: the menu's default
+        // check and the overlay name would otherwise vanish on a transient
+        // AudioSrv failure, while the device list itself is retained. An empty
+        // list is a real "no endpoints", which does clear it.
+        self.cached_device = next_default_device(
+            self.cached_device.take(),
+            snap.default_device.clone(),
+            &snap.devices,
+        );
         self.tray.update_icon_if_changed(self.cached_mute);
         self.refresh_osd_if_visible();
     }
@@ -85,7 +93,12 @@ impl<B: AudioBackend> App<B> {
                 tracing::warn!("volume/mute refresh failed; keeping the last known values: {e}");
             }
         }
-        self.cached_device = self.backend.get_default_device();
+        // A failed read (`None`) keeps the last known device: the endpoint is
+        // transiently unavailable, and `refresh_ui` corrects the mirror once the
+        // device list is readable again.
+        if let Some(device) = self.backend.get_default_device() {
+            self.cached_device = Some(device);
+        }
         // An external mute must move the menu's check mark too, or it disagrees
         // with the tray icon until some unrelated refresh corrects it.
         self.tray.sync_mute(self.cached_mute);
@@ -252,8 +265,9 @@ impl<B: AudioBackend> App<B> {
     /// Toggle the default output device's mute.
     pub(super) fn toggle_mute(&mut self) {
         // The overlay reads the mirror; a placeholder read would show the wrong
-        // volume for the rest of the card.
-        self.ensure_volume_known();
+        // volume for the rest of the card. The mute write and its icon still go
+        // through — only the card is withheld until a read succeeds.
+        let volume_known = self.ensure_volume_known();
         let target = !self.cached_mute;
         if let Err(e) = self.backend.set_mute(target) {
             tracing::warn!("set_mute failed: {e}");
@@ -276,7 +290,9 @@ impl<B: AudioBackend> App<B> {
         // whole snapshot and walk the menu for one check mark.
         self.tray.sync_mute(target);
         self.tray.update_icon_if_changed(target);
-        self.show_osd();
+        if volume_known {
+            self.show_osd();
+        }
     }
 
     /// Nudge the master volume by `delta` percent and show feedback.
@@ -336,20 +352,23 @@ impl<B: AudioBackend> App<B> {
     /// Read the endpoint once after a failed startup snapshot.
     ///
     /// The midpoint seeded at startup keeps the UI usable, but it must never
-    /// become a step origin or the OSD's reading. A failed read leaves the
-    /// mirror unknown and the caller decides whether the gesture can proceed.
+    /// become a step origin or the OSD's reading. Mute is read with it: a
+    /// toggle from a guessed `false` would write the state that is already
+    /// there. A failed read leaves both mirrors unknown and the caller decides
+    /// whether the gesture can proceed.
     fn ensure_volume_known(&mut self) -> bool {
         if self.volume_known {
             return true;
         }
-        match self.backend.get_volume() {
-            Ok(volume) => {
+        match self.backend.get_volume_and_mute() {
+            Ok((volume, mute)) => {
                 self.cached_volume = volume;
+                self.cached_mute = mute;
                 self.volume_known = true;
                 true
             }
             Err(e) => {
-                tracing::warn!("volume read failed; keeping the placeholder: {e}");
+                tracing::warn!("volume/mute read failed; keeping the placeholder: {e}");
                 false
             }
         }
