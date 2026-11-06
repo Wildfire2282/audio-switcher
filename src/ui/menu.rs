@@ -340,13 +340,16 @@ fn append_devices(menu: &Menu, state: &MenuState<'_>) -> Result<DeviceGroup, mud
 
     if outputs.is_empty() && inputs.is_empty() {
         // Visible empty state: the device group must not vanish silently, or
-        // a failed enumeration looks like a menu that lost its devices.
+        // a failed enumeration looks like a menu that lost its devices. The
+        // separator keeps the placeholder from reading as a header for the
+        // mute entry below it.
         menu.append(&MenuItem::with_id(
             id::NO_DEVICES,
             tr("no_devices", ui_lang),
             false,
             None,
         ))?;
+        menu.append(&PredefinedMenuItem::separator())?;
         return Ok(DeviceGroup { outputs, inputs });
     }
     // Disabled section headers; ids avoid the device prefixes so the handler
