@@ -241,6 +241,14 @@ impl Buffer {
                 return None;
             }
             let old_bmp = SelectObject(dc, HGDIOBJ(bmp.0));
+            if old_bmp.0.is_null() {
+                // The bitmap was not selected: deleting it here is safe, and
+                // deleting the DC without a selected bitmap leaks nothing.
+                let _ = DeleteObject(HGDIOBJ(bmp.0));
+                let _ = DeleteDC(dc);
+                tracing::warn!("osd: GDI allocation failed: SelectObject");
+                return None;
+            }
             let _ = SetBkMode(dc, TRANSPARENT);
             Some(Self { dc, bmp, old_bmp })
         }
