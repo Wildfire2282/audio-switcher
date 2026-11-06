@@ -60,11 +60,27 @@ pub(super) fn apply_hotkeys(cfg: &AppConfig) {
         return;
     };
     let lang = cfg.effective_lang();
+    // The combos and the actions they drive have to match the config file's
+    // wording; `summarize` is the English form the log error carries.
+    let list = occupied
+        .iter()
+        .map(|(action, hotkey)| {
+            let action = match action {
+                HotkeyAction::Mute => crate::ui::i18n::tr("hotkey_mute", lang),
+                HotkeyAction::VolumeUp => crate::ui::i18n::tr("hotkey_volume_up", lang),
+                HotkeyAction::VolumeDown => crate::ui::i18n::tr("hotkey_volume_down", lang),
+                HotkeyAction::NextDevice => crate::ui::i18n::tr("hotkey_next_device", lang),
+                HotkeyAction::PrevDevice => crate::ui::i18n::tr("hotkey_prev_device", lang),
+            };
+            format!("{} ({})", hotkey::describe_hotkey(hotkey), action)
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     crate::platform::dialog::show_msgbox(&format!(
         "{}: {}\n\n{}\n\n{} {}",
         crate::TOOL_DISPLAY_NAME,
         crate::ui::i18n::tr("hotkey_conflict", lang),
-        hotkey::summarize(&occupied),
+        list,
         crate::ui::i18n::tr("hotkey_conflict_hint", lang),
         AppConfig::config_path().display(),
     ));

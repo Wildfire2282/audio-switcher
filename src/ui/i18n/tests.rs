@@ -62,6 +62,11 @@ const PRODUCTION_KEYS: &[&str] = &[
     "link_error",
     "hotkey_conflict",
     "hotkey_conflict_hint",
+    "hotkey_mute",
+    "hotkey_volume_up",
+    "hotkey_volume_down",
+    "hotkey_next_device",
+    "hotkey_prev_device",
 ];
 
 /// An unknown key is returned verbatim, so an arm missing from one language
@@ -83,7 +88,7 @@ fn every_production_key_is_translated_in_both_languages() {
     }
     assert_eq!(
         PRODUCTION_KEYS.len(),
-        31,
+        36,
         "the key list must match the arms of `tr`"
     );
 }

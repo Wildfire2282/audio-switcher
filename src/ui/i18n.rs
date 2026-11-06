@@ -209,6 +209,41 @@ pub(crate) fn tr(key: &str, lang: Lang) -> String {
                     .into()
             }
         }
+        "hotkey_mute" => {
+            if zh {
+                "静音切换".into()
+            } else {
+                "Toggle mute".into()
+            }
+        }
+        "hotkey_volume_up" => {
+            if zh {
+                "音量加".into()
+            } else {
+                "Volume up".into()
+            }
+        }
+        "hotkey_volume_down" => {
+            if zh {
+                "音量减".into()
+            } else {
+                "Volume down".into()
+            }
+        }
+        "hotkey_next_device" => {
+            if zh {
+                "下一个输出设备".into()
+            } else {
+                "Next output device".into()
+            }
+        }
+        "hotkey_prev_device" => {
+            if zh {
+                "上一个输出设备".into()
+            } else {
+                "Previous output device".into()
+            }
+        }
         "hotkey_conflict_hint" => {
             if zh {
                 "关闭占用的程序，或编辑此文件更换组合：".into()
