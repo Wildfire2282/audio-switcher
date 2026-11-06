@@ -72,6 +72,9 @@ fn locale_names_resolve_to_a_language() {
         ("zh-TW", Lang::En),
         ("zh-Hant-TW", Lang::En),
         ("zh_HK", Lang::En),
+        // An explicit script tag wins over the region's Traditional default.
+        ("zh-Hans-HK", Lang::Zh),
+        ("zh-Hans-TW", Lang::Zh),
         ("en-US", Lang::En),
         ("de-DE", Lang::En),
         ("", Lang::En),

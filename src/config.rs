@@ -51,15 +51,23 @@ impl Lang {
 
     /// Map a locale name (`"zh-CN"`, `"en-US"`) to a language. Pure and
     /// branch-tested. Traditional-Chinese locales fall back to English
-    /// (untranslated); everything else is English.
+    /// (untranslated); every other Chinese locale is Simplified.
     #[must_use]
     pub fn for_locale_name(name: &str) -> Self {
         let lower = name.to_ascii_lowercase();
         if lower.starts_with("zh") {
-            let traditional = lower.contains("hant")
-                || ["-hk", "-tw", "-mo", "_hk", "_tw", "_mo"]
-                    .iter()
-                    .any(|s| lower.contains(s));
+            // An explicit script tag overrides the region: even where
+            // Traditional is the regional default, `zh-Hans-HK` asked for
+            // Simplified.
+            if lower.contains("hant") {
+                return Self::En;
+            }
+            if lower.contains("hans") {
+                return Self::Zh;
+            }
+            let traditional = ["-hk", "-tw", "-mo", "_hk", "_tw", "_mo"]
+                .iter()
+                .any(|s| lower.contains(s));
             if traditional {
                 return Self::En;
             }
