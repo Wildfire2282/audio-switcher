@@ -67,7 +67,7 @@ fn suppress_notify() -> bool {
 
 /// Returns and clears the device-change flag set by `IMMNotificationClient`.
 #[cfg(windows)]
-pub fn take_device_changed() -> bool {
+pub(super) fn take_device_changed() -> bool {
     DEVICE_CHANGED.swap(false, AtomicOrdering::AcqRel)
 }
 
@@ -78,7 +78,7 @@ pub fn take_device_changed() -> bool {
 /// leave the loop never latching the change — the menu then stays stale until
 /// an unrelated notification happens to arrive.
 #[cfg(windows)]
-pub fn device_changed_pending() -> bool {
+pub(super) fn device_changed_pending() -> bool {
     DEVICE_CHANGED.load(AtomicOrdering::Acquire)
 }
 
@@ -90,7 +90,7 @@ static VOLUME_CHANGED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(windows)]
 /// Returns and clears the external volume-change flag.
-pub fn take_volume_changed() -> bool {
+pub(super) fn take_volume_changed() -> bool {
     VOLUME_CHANGED.swap(false, AtomicOrdering::AcqRel)
 }
 
@@ -390,12 +390,26 @@ pub(super) fn spawn_volume_notify_worker() {
                 let guard = lock
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                drop(
-                    cv.wait_timeout_while(guard, wait, |()| {
+                let (guard, timed_out) = cv
+                    .wait_timeout_while(guard, wait, |()| {
                         !VOLUME_REREGISTER.load(AtomicOrdering::Acquire)
                     })
-                    .unwrap_or_else(std::sync::PoisonError::into_inner),
-                );
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                drop(guard);
+                // The wait loop never observes a lost signal (the flag is
+                // re-read under the mutex), so the timeout is a liveness check
+                // instead: after an AudioSrv restart the interface object still
+                // exists but every call through its proxy fails. Probe it once
+                // a minute and re-register when the endpoint generation is gone.
+                if timed_out.timed_out() && live {
+                    if let Some((_, volume)) = current.as_ref() {
+                        // SAFETY: this thread initialized COM; `volume` is the
+                        // live interface this loop owns.
+                        if unsafe { volume.GetMasterVolumeLevelScalar() }.is_err() {
+                            VOLUME_REREGISTER.store(true, AtomicOrdering::Release);
+                        }
+                    }
+                }
             }
         });
     // Latched only once the thread exists: a failed spawn must stay retryable
@@ -502,22 +516,35 @@ unsafe extern "system" fn device_on_removed(
 #[cfg(windows)]
 unsafe extern "system" fn device_on_default_changed(
     _this: *mut std::ffi::c_void,
-    _flow: windows::Win32::Media::Audio::EDataFlow,
-    _role: windows::Win32::Media::Audio::ERole,
+    flow: windows::Win32::Media::Audio::EDataFlow,
+    role: windows::Win32::Media::Audio::ERole,
     _device_id: windows::core::PCWSTR,
 ) -> windows::core::HRESULT {
     use windows::Win32::Foundation::S_OK;
-    // Re-register on the new default endpoint (the old device's registration
-    // is dying with it). Never block the COM callback thread on the id lock
-    // below: the id is informational only, so a contended lock is simply
-    // skipped — the worker clears/sets it itself.
-    request_volume_reregister();
-    if let Ok(mut id) = VOLUME_NOTIFY_ID.try_lock() {
-        *id = None;
+    // Re-register only the endpoint the callback tracks: the volume callback
+    // lives on the multimedia render endpoint, and a capture or console-role
+    // switch must not tear that registration down. Never block the COM
+    // callback thread on the id lock below: the id is informational only, so a
+    // contended lock is simply skipped — the worker clears/sets it itself.
+    if tracks_volume_callback(flow, role) {
+        request_volume_reregister();
+        if let Ok(mut id) = VOLUME_NOTIFY_ID.try_lock() {
+            *id = None;
+        }
     }
     DEVICE_CHANGED.store(true, AtomicOrdering::Release);
     crate::platform::pump::wake();
     S_OK
+}
+
+/// Whether a default-device notification changes the endpoint the volume
+/// callback is registered on.
+#[cfg(windows)]
+pub(super) fn tracks_volume_callback(
+    flow: windows::Win32::Media::Audio::EDataFlow,
+    role: windows::Win32::Media::Audio::ERole,
+) -> bool {
+    flow == eRender && role == eMultimedia
 }
 
 #[cfg(windows)]
@@ -586,16 +613,21 @@ unsafe impl Send for NotifierHolder {}
 // SAFETY: see Send impl.
 unsafe impl Sync for NotifierHolder {}
 #[cfg(windows)]
-static NOTIFIER_HOLDER: std::sync::OnceLock<NotifierHolder> = std::sync::OnceLock::new();
+static NOTIFIER_HOLDER: Mutex<Option<NotifierHolder>> = Mutex::new(None);
 
+/// Register (or re-register) the endpoint-notification client.
+///
+/// Re-registration is the recovery path for a restarted `audiosrv`: the
+/// enumerator proxy the registration lives on dies with that service, and the
+/// registration then never fires again. The replacement is built and
+/// registered before the old one is unregistered, so a failed attempt leaves
+/// the previous registration in place. Must run on the STA thread that pumps
+/// messages (`App` calls this from construction and from the menu's Refresh).
 #[cfg(windows)]
 pub(super) fn register_notification_client() -> bool {
-    if NOTIFIER_HOLDER.get().is_some() {
-        return true;
-    }
-    unsafe {
-        // SAFETY: CoCreateInstance and RegisterEndpointNotificationCallback are
-        // valid on an initialized STA thread.
+    // SAFETY: CoCreateInstance and RegisterEndpointNotificationCallback are
+    // valid on an initialized STA thread.
+    let holder = unsafe {
         let Ok(enumerator) =
             CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)
         else {
@@ -609,10 +641,24 @@ pub(super) fn register_notification_client() -> bool {
             tracing::warn!("device notifier: registration failed: {e}");
             return false;
         }
-        let _ = NOTIFIER_HOLDER.set(NotifierHolder {
+        NotifierHolder {
             enumerator,
             notifier,
-        });
+        }
+    };
+    let previous = NOTIFIER_HOLDER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .replace(holder);
+    if let Some(old) = previous {
+        // SAFETY: the old holder was created and registered on this thread and
+        // is still live here; a dead proxy (restarted service) rejects the
+        // call, which is fine because the object is dropped next.
+        unsafe {
+            let _ = old
+                .enumerator
+                .UnregisterEndpointNotificationCallback(&old.notifier);
+        }
     }
     true
 }

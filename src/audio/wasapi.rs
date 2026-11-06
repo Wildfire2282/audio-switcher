@@ -44,6 +44,7 @@ use notify::{
 
 /// The Windows WASAPI backend.
 #[cfg(windows)]
+#[derive(Debug)]
 pub struct WasapiBackend {
     cached: Option<Vec<AudioDevice>>,
     cache_time: Option<Instant>,
@@ -91,6 +92,11 @@ impl WasapiBackend {
     pub fn clear_cache(&mut self) {
         self.invalidate_lists();
         self.cached_enumerator = None;
+        // Both registrations ride proxies owned by the `audiosrv` instance that
+        // created them, so a restarted service kills them even though the
+        // interface objects still exist. Re-register both here; this is the
+        // recovery the menu's Refresh offers.
+        let _ = register_notification_client();
         request_volume_reregister();
     }
 
@@ -123,11 +129,25 @@ impl WasapiBackend {
         let mut snap = AudioSnapshot::default();
         // Prefer the cached enumerator.
         let Ok(enumerator) = self.enumerator_mut() else {
+            // A failed enumerator is not "no devices": keep the last known
+            // lists so a transient AudioSrv failure does not empty the menu.
+            if let Some(devices) = &self.cached {
+                snap.devices.clone_from(devices);
+            }
+            if let Some(devices) = &self.input_cached {
+                snap.input_devices.clone_from(devices);
+            }
             return snap;
         };
         // Devices (3000ms cache; notifications already cleared it, so hits last longer).
-        if let Ok(devs) = self.enumerate_devices_inner(&enumerator, eRender) {
-            snap.devices = devs;
+        match self.enumerate_devices_inner(&enumerator, eRender) {
+            Ok(devs) => snap.devices = devs,
+            Err(e) => {
+                tracing::warn!("device enumeration failed ({e}); keeping the cached list");
+                if let Some(devices) = &self.cached {
+                    snap.devices.clone_from(devices);
+                }
+            }
         }
         // Default + volume/mute share one endpoint.
         // SAFETY: the `windows` crate marks COM methods unsafe. Every call here
@@ -167,8 +187,14 @@ impl WasapiBackend {
             }
         }
         // capture devices share the cached enumerator; render-only volume/mute untouched.
-        if let Ok(inputs) = self.enumerate_devices_inner(&enumerator, eCapture) {
-            snap.input_devices = inputs;
+        match self.enumerate_devices_inner(&enumerator, eCapture) {
+            Ok(inputs) => snap.input_devices = inputs,
+            Err(e) => {
+                tracing::warn!("input enumeration failed ({e}); keeping the cached list");
+                if let Some(devices) = &self.input_cached {
+                    snap.input_devices.clone_from(devices);
+                }
+            }
         }
         snap.default_input_device =
             Self::default_device_with(self.cached_enumerator.as_ref(), eCapture);
@@ -457,7 +483,9 @@ impl AudioBackend for WasapiBackend {
             match vol.SetMasterVolumeLevelScalar(v, std::ptr::null()) {
                 Ok(()) => Ok(()),
                 Err(e) => {
-                    // Only retry on busy/timeout HRESULTs; invalid arg is permanent.
+                    // Only retry on the two transient transport HRESULTs seen
+                    // at the endpoint boundary (read fault, aborted connection);
+                    // every other failure is treated as permanent.
                     let hr = e.code().0 as u32;
                     if (hr == 0x8007_001E || hr == 0x8007_04D4)
                         && vol.SetMasterVolumeLevelScalar(v, std::ptr::null()).is_ok()
@@ -508,6 +536,7 @@ impl AudioBackend for WasapiBackend {
 
 /// Real backend stub for non-Windows (compilation only).
 #[cfg(not(windows))]
+#[derive(Debug)]
 pub struct WasapiBackend {
     cached: Option<Vec<AudioDevice>>,
     cache_time: Option<Instant>,

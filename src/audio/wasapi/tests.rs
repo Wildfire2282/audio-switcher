@@ -6,6 +6,16 @@
 
 use super::*;
 
+/// The volume callback follows the multimedia render endpoint only: a capture
+/// or console-role default change must not tear its registration down.
+#[test]
+fn only_the_multimedia_render_default_change_touches_the_volume_callback() {
+    use super::notify::tracks_volume_callback;
+    assert!(tracks_volume_callback(eRender, eMultimedia));
+    assert!(!tracks_volume_callback(eCapture, eMultimedia));
+    assert!(!tracks_volume_callback(eRender, eConsole));
+}
+
 /// End-to-end check for the external volume-change notification: an
 /// independent COM thread changes the master volume (simulating another
 /// app / media keys); the registered `IAudioEndpointVolumeCallback` must
@@ -40,6 +50,16 @@ fn integration_external_volume_change_notifies() {
         "MTA worker did not register the volume callback"
     );
     let (vol0, _) = backend.get_volume_and_mute().expect("volume read");
+    // Restore on every exit path: the assertions below change the machine's
+    // real master volume, and a failure must not leave it moved.
+    struct RestoreVolume(u32);
+    impl Drop for RestoreVolume {
+        fn drop(&mut self) {
+            let mut backend = WasapiBackend::new();
+            let _ = backend.set_volume(self.0);
+        }
+    }
+    let _restore = RestoreVolume(vol0);
     let new_vol = if vol0 >= 50 { vol0 - 10 } else { vol0 + 10 };
 
     let set_ext = |vol: u32| {
@@ -79,7 +99,9 @@ fn integration_external_volume_change_notifies() {
     // Self-notifications arrive asynchronously, so wait past the
     // suppression window and assert none arrived.
     backend.set_volume(vol0).expect("restore volume");
-    for _ in 0..10 {
+    // Well past the 200ms suppression window: a callback delayed by a busy
+    // audio service must not be mistaken for a failed suppression.
+    for _ in 0..20 {
         std::thread::sleep(Duration::from_millis(50));
         assert!(
             !take_volume_changed(),
