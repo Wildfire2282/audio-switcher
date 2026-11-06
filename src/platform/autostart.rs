@@ -17,8 +17,8 @@
 //! elevation was needed and deleted the helper; that measurement was taken in an
 //! already-elevated shell, which hid the requirement.)
 //!
-//! Read failures are [`AutostartState::Unknown`]: the UI grays the group out, it
-//! never pretends the setting is off, and no write happens on `Unknown`.
+//! Read failures are `None`: the UI grays the group out, it never pretends the
+//! setting is off, and no write happens on `None`.
 
 mod run_value;
 mod task;
@@ -71,33 +71,6 @@ pub(crate) enum AutostartError {
     },
 }
 
-/// Read-back of the autostart setting; the menu renders it and never writes on
-/// `Unknown`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum AutostartState {
-    Off,
-    User,
-    Admin,
-    /// Read failed (reason); UI reports, never writes.
-    Unknown(String),
-}
-
-impl AutostartState {
-    /// The installed mode, or `None` when the read failed.
-    ///
-    /// The single place the read-back becomes a mode: `ui` renders `None` as the
-    /// grayed group and never guesses one.
-    #[must_use]
-    pub(crate) fn mode(&self) -> Option<AutostartMode> {
-        match self {
-            Self::Off => Some(AutostartMode::Off),
-            Self::User => Some(AutostartMode::User),
-            Self::Admin => Some(AutostartMode::Admin),
-            Self::Unknown(_) => None,
-        }
-    }
-}
-
 /// `Run` value name and scheduled-task name, both derived from the PascalCase
 /// display name. Locked by test: renaming orphans existing installs.
 ///
@@ -118,22 +91,35 @@ pub(crate) fn get_exe_path() -> Option<PathBuf> {
 
 /// The scheduled-task half comes from a cache (see [`refresh_admin_task_cache`])
 /// because `schtasks` costs a process launch and this runs on every menu refresh.
-/// A read failure is `Unknown`, never `Off`: the caller grays the UI out and must
+/// A read failure is `None`, never `Off`: the caller grays the UI out and must
 /// not write.
 #[must_use]
-pub(crate) fn autostart_state() -> AutostartState {
-    match run_value_state() {
-        Ok(RunEntry::Enabled) => AutostartState::User,
+pub(crate) fn autostart_state() -> Option<AutostartMode> {
+    mode_from(run_value_state(), admin_task_cached())
+}
+
+/// Map the two independent read-backs to the installed mode.
+///
+/// `None` is "unreadable", never `Off`: the caller grays the UI out and must
+/// not write. The failure is logged here because nothing else sees its reason —
+/// the menu only draws the grayed group.
+fn mode_from(
+    run: Result<RunEntry, std::io::Error>,
+    admin_task_present: bool,
+) -> Option<AutostartMode> {
+    match run {
+        Ok(RunEntry::Enabled) => Some(AutostartMode::User),
         // A `Run` value the shell has switched off is not autostarting, so the
-        // menu must not show it as if it were.
-        Ok(RunEntry::Absent | RunEntry::Disabled) => {
-            if admin_task_cached() {
-                AutostartState::Admin
-            } else {
-                AutostartState::Off
-            }
+        // menu must not show it as if it were; only a task can still be live.
+        Ok(RunEntry::Absent | RunEntry::Disabled) => Some(if admin_task_present {
+            AutostartMode::Admin
+        } else {
+            AutostartMode::Off
+        }),
+        Err(e) => {
+            tracing::warn!("autostart state unreadable: {e}");
+            None
         }
-        Err(e) => AutostartState::Unknown(e.to_string()),
     }
 }
 

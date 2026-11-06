@@ -139,7 +139,7 @@ impl<B: AudioBackend> App<B> {
         apply_hotkeys(&cfg);
         let ui_lang = cfg.effective_lang();
         // `None` is "unreadable": the menu grays the group instead of guessing.
-        let autostart = autostart_state().mode();
+        let autostart = autostart_state();
         let boot = MenuState {
             cfg: &cfg,
             devices: &[],

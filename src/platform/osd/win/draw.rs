@@ -359,18 +359,15 @@ impl Drop for PaintCache {
     }
 }
 
-/// A GDI object selected into a DC, restored and released on drop.
+/// A GDI object selected into a DC, restored on drop.
 ///
-/// Keeps the select / draw / restore / release cycle in one place instead of
-/// repeating the bookkeeping at every call site — and makes it impossible to
-/// release an object while it is still selected, which Windows refuses,
-/// leaking the object for the process lifetime.
+/// Keeps the select / draw / restore cycle in one place instead of repeating
+/// the bookkeeping at every call site. Every object it selects is owned by
+/// [`PaintCache`] or is a stock object, so the guard restores but never
+/// deletes: Windows refuses to delete an object that is still selected.
 struct Selected {
     dc: HDC,
     previous: HGDIOBJ,
-    /// The object to release, or `None` for stock objects, which must never
-    /// be deleted.
-    owned: Option<HGDIOBJ>,
 }
 
 impl Selected {
@@ -380,14 +377,10 @@ impl Selected {
     ///
     /// `dc` must be a live device context and `object` a valid GDI object
     /// that is not currently selected into another DC.
-    unsafe fn new(dc: HDC, object: HGDIOBJ, owned: bool) -> Self {
+    unsafe fn new(dc: HDC, object: HGDIOBJ) -> Self {
         // SAFETY: the caller guarantees both handles are valid.
         let previous = unsafe { SelectObject(dc, object) };
-        Self {
-            dc,
-            previous,
-            owned: owned.then_some(object),
-        }
+        Self { dc, previous }
     }
 }
 
@@ -397,9 +390,6 @@ impl Drop for Selected {
         // cannot outlive the buffer DC owned by `draw_card`.
         unsafe {
             SelectObject(self.dc, self.previous);
-            if let Some(object) = self.owned {
-                let _ = DeleteObject(object);
-            }
         }
     }
 }
@@ -440,9 +430,9 @@ pub(super) fn draw_card(hdc: HDC, content: &OsdContent, dpi: i32) {
         };
 
         // SAFETY: `buf.dc` is live and every handle passed to `Selected` belongs
-        // to `cache`, which outlives the paint: `false` means "do not release".
+        // to `cache`, which outlives the paint.
         unsafe {
-            let _font = Selected::new(buf.dc, HGDIOBJ(cache.font.0), false);
+            let _font = Selected::new(buf.dc, HGDIOBJ(cache.font.0));
             let state_col = cache.state_col(buf.dc, &content.muted_label);
             let l = layout::layout(w, h, dpi, state_col, content);
 
@@ -462,16 +452,16 @@ pub(super) fn draw_card(hdc: HDC, content: &OsdContent, dpi: i32) {
 
             // Card fill, no outline.
             {
-                let _pen = Selected::new(buf.dc, GetStockObject(NULL_PEN), false);
-                let _brush = Selected::new(buf.dc, HGDIOBJ(cache.card.0), false);
+                let _pen = Selected::new(buf.dc, GetStockObject(NULL_PEN));
+                let _brush = Selected::new(buf.dc, HGDIOBJ(cache.card.0));
                 let _ = RoundRect(buf.dc, 0, 0, w, h, radius, radius);
             }
 
             // Hairline stroke, drawn one pixel inside the fill so the right and
             // bottom edges are not clipped away at the client boundary.
             {
-                let _pen = Selected::new(buf.dc, HGDIOBJ(cache.border.0), false);
-                let _brush = Selected::new(buf.dc, GetStockObject(NULL_BRUSH), false);
+                let _pen = Selected::new(buf.dc, HGDIOBJ(cache.border.0));
+                let _brush = Selected::new(buf.dc, GetStockObject(NULL_BRUSH));
                 let _ = RoundRect(buf.dc, 0, 0, w - 1, h - 1, radius, radius);
             }
 
@@ -480,8 +470,8 @@ pub(super) fn draw_card(hdc: HDC, content: &OsdContent, dpi: i32) {
             // selects only a brush strokes its rounded rect with the default
             // black pen.
             {
-                let _pen = Selected::new(buf.dc, GetStockObject(NULL_PEN), false);
-                let _brush = Selected::new(buf.dc, HGDIOBJ(cache.track.0), false);
+                let _pen = Selected::new(buf.dc, GetStockObject(NULL_PEN));
+                let _brush = Selected::new(buf.dc, HGDIOBJ(cache.track.0));
                 let _ = RoundRect(
                     buf.dc,
                     l.bar_track.left,
@@ -496,13 +486,13 @@ pub(super) fn draw_card(hdc: HDC, content: &OsdContent, dpi: i32) {
             // Filled portion and thumb, both in the accent (neutral while
             // muted).
             {
-                let _pen = Selected::new(buf.dc, GetStockObject(NULL_PEN), false);
+                let _pen = Selected::new(buf.dc, GetStockObject(NULL_PEN));
                 let level = if content.muted {
                     cache.muted_fill
                 } else {
                     cache.fill
                 };
-                let _brush = Selected::new(buf.dc, HGDIOBJ(level.0), false);
+                let _brush = Selected::new(buf.dc, HGDIOBJ(level.0));
                 if l.bar_fill.right > l.bar_fill.left {
                     let _ = RoundRect(
                         buf.dc,

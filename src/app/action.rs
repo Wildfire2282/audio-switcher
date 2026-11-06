@@ -38,7 +38,7 @@ impl<B: AudioBackend> App<B> {
         }
         let def_id = snap.default_device.as_ref().map(|d| d.id.as_str());
         let def_input_id = snap.default_input_device.as_ref().map(|d| d.id.as_str());
-        let autostart = autostart_state().mode();
+        let autostart = autostart_state();
         // In-place menu update; rebuilds only when the device list changed.
         self.tray.sync_menu(&MenuState {
             cfg: &self.cfg,

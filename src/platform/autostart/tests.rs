@@ -20,21 +20,39 @@ fn key_names_locked() {
 }
 
 #[test]
-fn unknown_never_implies_off() {
-    let unknown = AutostartState::Unknown("test".to_string());
-    assert_ne!(unknown, AutostartState::Off);
-    assert_ne!(unknown, AutostartState::User);
-    assert_ne!(unknown, AutostartState::Admin);
+fn the_read_backs_map_to_the_installed_mode() {
+    // This is the menu's only input: a state mapped to the wrong mode would
+    // check the wrong entry.
+    assert_eq!(
+        mode_from(Ok(RunEntry::Enabled), false),
+        Some(AutostartMode::User)
+    );
+    assert_eq!(
+        mode_from(Ok(RunEntry::Absent), false),
+        Some(AutostartMode::Off)
+    );
+    assert_eq!(
+        mode_from(Ok(RunEntry::Absent), true),
+        Some(AutostartMode::Admin)
+    );
+    // Switched off in Task Manager's Startup tab: only a task can still be live.
+    assert_eq!(
+        mode_from(Ok(RunEntry::Disabled), true),
+        Some(AutostartMode::Admin)
+    );
+    assert_eq!(
+        mode_from(Ok(RunEntry::Disabled), false),
+        Some(AutostartMode::Off)
+    );
 }
 
 #[test]
-fn mode_maps_every_known_state_and_none_for_unknown() {
-    // This is the menu's only input: a state mapped to the wrong mode would
-    // check the wrong entry, and `Unknown` must never render as a real mode.
-    assert_eq!(AutostartState::Off.mode(), Some(AutostartMode::Off));
-    assert_eq!(AutostartState::User.mode(), Some(AutostartMode::User));
-    assert_eq!(AutostartState::Admin.mode(), Some(AutostartMode::Admin));
-    assert_eq!(AutostartState::Unknown("unreadable".into()).mode(), None);
+fn an_unreadable_state_is_unknown_never_off() {
+    assert_eq!(
+        mode_from(Err(std::io::Error::other("access denied")), true),
+        None,
+        "an unreadable Run entry must not render as a mode"
+    );
 }
 
 #[test]
