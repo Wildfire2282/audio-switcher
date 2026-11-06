@@ -105,7 +105,21 @@ pub trait AudioBackend {
         let input_devices = self.enumerate_input_devices().unwrap_or_default();
         let default_input_device = self.get_default_input_device();
         let (volume, mute) = match self.get_volume_and_mute() {
-            Ok((volume, mute)) => (Some(crate::config::clamp_volume(volume, cfg)), Some(mute)),
+            Ok((volume, mute)) => {
+                let clamped = crate::config::clamp_volume(volume, cfg);
+                // A snapshot that reports the cap must have enforced it: only a
+                // confirmed write moves the read-out, or the caller mirrors a
+                // level the endpoint never reached.
+                let volume = if clamped == volume {
+                    volume
+                } else if let Err(e) = self.set_volume(clamped) {
+                    tracing::warn!("snapshot volume clamp failed: {e}");
+                    volume
+                } else {
+                    clamped
+                };
+                (Some(volume), Some(mute))
+            }
             Err(e) => {
                 // `None`, never a fabricated reading: the caller keeps its last
                 // known mirror, and a made-up `50` would move the next wheel

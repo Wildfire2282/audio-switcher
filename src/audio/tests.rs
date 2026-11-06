@@ -55,6 +55,33 @@ fn clamp_via_backend() {
     assert_eq!(m.volume, 25);
 }
 
+/// A snapshot that reports the cap must have written it: the caller mirrors
+/// this value, so a read-out above the endpoint would misplace the next step.
+#[test]
+fn a_clamped_snapshot_enforces_the_cap_on_the_endpoint() {
+    let mut backend = MockBackend::new(vec![], None);
+    backend.volume = 80;
+    backend.mute = true;
+    let cfg = AppConfig {
+        volume_limit: 25,
+        ..Default::default()
+    };
+
+    let snapshot = backend.fetch_snapshot_clamped(&cfg);
+
+    assert_eq!(
+        backend.get_volume().unwrap(),
+        25,
+        "the snapshot must write the clamped level, not only report it"
+    );
+    assert_eq!(snapshot.volume, Some(25));
+    assert_eq!(
+        snapshot.mute,
+        Some(true),
+        "applying the cap must not change mute"
+    );
+}
+
 #[test]
 fn set_default_input_device_mock() {
     let outs = vec![AudioDevice {
