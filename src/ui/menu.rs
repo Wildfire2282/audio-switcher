@@ -15,44 +15,44 @@ use crate::ui::i18n::tr;
 use crate::ui::label::{MAX_LABEL_CHARS, truncate_label};
 
 /// Prefix for per-device menu item IDs; the remainder is the WASAPI endpoint ID.
-pub const DEVICE_PREFIX: &str = "device_";
+pub(crate) const DEVICE_PREFIX: &str = "device_";
 /// Prefix for per-input-device menu item IDs; the remainder is the WASAPI endpoint ID.
-pub const INPUT_PREFIX: &str = "input_";
+pub(crate) const INPUT_PREFIX: &str = "input_";
 /// Volume-limit presets offered in the submenu (percent).
-pub const VOLUME_PRESETS: &[u32] = &[25, 50, 75];
+pub(crate) const VOLUME_PRESETS: &[u32] = &[25, 50, 75];
 
 /// Menu item IDs shared with [`crate::app::handler::MenuAction::from_id`].
 /// 1.0 contract: never rename, never reuse deleted ids; adding is minor.
 /// (`hotkeys` / `hotkey_*` are retired and must not be reused.)
-pub mod id {
+pub(crate) mod id {
     /// Grayed title (non-clickable, never parsed as an action).
-    pub const TITLE: &str = "title";
+    pub(crate) const TITLE: &str = "title";
     /// Manual device-list refresh (sleep-resume/callback-loss fallback).
-    pub const REFRESH: &str = "refresh";
-    pub const MUTE: &str = "mute";
-    pub const VOL_ENABLED: &str = "vol_enabled";
-    pub const OPEN_MIXER: &str = "open_mixer";
-    pub const OPEN_SOUND: &str = "open_sound";
-    pub const OPEN_HOTKEY_SETTINGS: &str = "open_hotkey_settings";
+    pub(crate) const REFRESH: &str = "refresh";
+    pub(crate) const MUTE: &str = "mute";
+    pub(crate) const VOL_ENABLED: &str = "vol_enabled";
+    pub(crate) const OPEN_MIXER: &str = "open_mixer";
+    pub(crate) const OPEN_SOUND: &str = "open_sound";
+    pub(crate) const OPEN_HOTKEY_SETTINGS: &str = "open_hotkey_settings";
     /// Frozen tail id: a submenu id never fires an action, so it keeps its
     /// original name. Same contract as the `lang_*` items.
-    pub const AUTOSTART: &str = "autostart";
-    pub const AUTOSTART_OFF: &str = "autostart_off";
-    pub const AUTOSTART_USER: &str = "autostart_user";
-    pub const AUTOSTART_ADMIN: &str = "autostart_admin";
+    pub(crate) const AUTOSTART: &str = "autostart";
+    pub(crate) const AUTOSTART_OFF: &str = "autostart_off";
+    pub(crate) const AUTOSTART_USER: &str = "autostart_user";
+    pub(crate) const AUTOSTART_ADMIN: &str = "autostart_admin";
     /// Frozen tail id, same contract as the `lang_*` items.
-    pub const LANGUAGE: &str = "language";
-    pub const LANG_SYSTEM: &str = "lang_system";
-    pub const LANG_ZH: &str = "lang_zh";
-    pub const LANG_EN: &str = "lang_en";
-    pub const ABOUT: &str = "about";
-    pub const EXIT: &str = "exit";
+    pub(crate) const LANGUAGE: &str = "language";
+    pub(crate) const LANG_SYSTEM: &str = "lang_system";
+    pub(crate) const LANG_ZH: &str = "lang_zh";
+    pub(crate) const LANG_EN: &str = "lang_en";
+    pub(crate) const ABOUT: &str = "about";
+    pub(crate) const EXIT: &str = "exit";
     /// Grayed placeholder shown when no endpoint was enumerated at all.
-    pub const NO_DEVICES: &str = "no_devices";
+    pub(crate) const NO_DEVICES: &str = "no_devices";
 
     /// Build the menu ID for a volume-limit preset, e.g. `vol_25`.
     #[must_use]
-    pub fn vol_preset(value: u32) -> String {
+    pub(crate) fn vol_preset(value: u32) -> String {
         format!("vol_{value}")
     }
 
@@ -62,7 +62,7 @@ pub mod id {
     /// so parsing stays an exact inverse of [`vol_preset`] for IDs this menu
     /// emits; anything else falls through to `Unknown` in the handler.
     #[must_use]
-    pub fn parse_vol_preset(id: &str) -> Option<u32> {
+    pub(crate) fn parse_vol_preset(id: &str) -> Option<u32> {
         let v = id.strip_prefix("vol_")?.parse::<u32>().ok()?;
         super::VOLUME_PRESETS.contains(&v).then_some(v)
     }
@@ -70,7 +70,7 @@ pub mod id {
 
 /// Grayed title `{DisplayName} v{ver}`; `CARGO_PKG_VERSION` is the single source.
 #[must_use]
-pub fn title_text() -> String {
+pub(crate) fn title_text() -> String {
     format!(
         "{} v{}",
         crate::TOOL_DISPLAY_NAME,
@@ -83,7 +83,7 @@ pub fn title_text() -> String {
 /// Item handles are retained so state changes (checks, labels) can be
 /// applied in place via [`MenuHandles::sync_state`] instead of rebuilding
 /// the whole menu tree.
-pub struct MenuHandles {
+pub(crate) struct MenuHandles {
     pub menu: Menu,
     /// Keyed by sanitized device id plus the display name used at build time
     /// (rename detection).
@@ -112,7 +112,7 @@ pub struct MenuHandles {
 /// Groups the eight `build_menu`/`sync_state` inputs so the tray boundary
 /// stays a two-argument call. All fields are `Copy` (shared refs, the mode and
 /// flags), so tests can derive variants with struct-update syntax (`..base`).
-pub struct MenuState<'a> {
+pub(crate) struct MenuState<'a> {
     pub cfg: &'a AppConfig,
     pub devices: &'a [AudioDevice],
     /// Shown checked.
@@ -136,7 +136,7 @@ impl MenuHandles {
 
     /// Move only the mute check, for an external mute change: every other leaf
     /// is already current, so the [`Self::sync_state`] device walk is not needed.
-    pub fn set_muted(&self, muted: bool) {
+    pub(crate) fn set_muted(&self, muted: bool) {
         self.mute.set_checked(muted);
     }
 
@@ -165,7 +165,7 @@ impl MenuHandles {
     /// reordered, renamed, UI language/mode changed, or labels otherwise
     /// stale. The caller must then fall back to a full rebuild.
     #[must_use]
-    pub fn sync_state(&mut self, state: &MenuState<'_>) -> bool {
+    pub(crate) fn sync_state(&mut self, state: &MenuState<'_>) -> bool {
         let MenuState {
             cfg,
             devices,
@@ -260,7 +260,7 @@ fn sync_entries(
 /// Win32 menu creation can fail under resource pressure. Callers must not
 /// panic on it: startup dialogs and exits through `TrayError`, and a runtime
 /// rebuild logs and keeps the menu that is already on screen.
-pub fn build_menu(state: &MenuState<'_>) -> Result<MenuHandles, muda::Error> {
+pub(crate) fn build_menu(state: &MenuState<'_>) -> Result<MenuHandles, muda::Error> {
     let MenuState { cfg, ui_lang, .. } = *state;
     let menu = Menu::new();
     menu.append(&MenuItem::with_id(id::TITLE, title_text(), false, None))?;
@@ -348,7 +348,7 @@ fn append_devices(menu: &Menu, state: &MenuState<'_>) -> Result<DeviceGroup, mud
     // never parses them as device actions even if they were clickable.
     if !outputs.is_empty() {
         menu.append(&MenuItem::with_id(
-            "outputs_header",
+            "section_outputs",
             tr("output_devices", ui_lang),
             false,
             None,
@@ -360,7 +360,7 @@ fn append_devices(menu: &Menu, state: &MenuState<'_>) -> Result<DeviceGroup, mud
     }
     if !inputs.is_empty() {
         menu.append(&MenuItem::with_id(
-            "inputs_header",
+            "section_inputs",
             tr("input_devices", ui_lang),
             false,
             None,

@@ -79,6 +79,19 @@ fn parse_input_device() {
 }
 
 #[test]
+fn section_headers_are_not_device_actions() {
+    // The disabled output/input headers share the menu with device entries; an
+    // `input_`-prefixed header id would parse as a capture endpoint and pop a
+    // device-error dialog if it ever became clickable.
+    for id in ["section_outputs", "section_inputs"] {
+        assert!(
+            matches!(MenuAction::from_id(id), MenuAction::Unknown(_)),
+            "{id} must not parse as a device action"
+        );
+    }
+}
+
+#[test]
 fn parse_vol_preset_only_accepts_menu_presets() {
     // The menu only emits 25/50/75 — anything else stays Unknown.
     assert!(matches!(
