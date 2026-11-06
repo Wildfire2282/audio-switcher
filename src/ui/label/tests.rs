@@ -14,6 +14,11 @@ fn short_passthrough() {
 #[test]
 fn sanitizes_control_chars() {
     assert_eq!(truncate_label("A\nB\rC\tD", MAX_LABEL_CHARS), "A B C D");
+    assert_eq!(
+        truncate_label("A\u{0}B\u{7f}C", MAX_LABEL_CHARS),
+        "A B C",
+        "every control character is replaced, not only whitespace"
+    );
 }
 
 #[test]

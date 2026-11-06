@@ -6,10 +6,16 @@
 /// truncation cannot drift apart).
 pub(crate) const MAX_LABEL_CHARS: usize = 64;
 
-/// Replace control whitespace with a plain space for UI display.
+/// Replace every control character with a plain space for UI display.
+///
+/// `\r`, `\n` and `\t` are the common ones, but a device name can carry any C0
+/// or C1 byte; GDI would draw those as stray glyphs or drop the rest of the
+/// line.
 #[must_use]
 pub(crate) fn sanitize_label(name: &str) -> String {
-    name.replace(['\r', '\n', '\t'], " ")
+    name.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 /// Truncate `raw` to `max_chars` characters, sanitizing first.
