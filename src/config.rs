@@ -392,16 +392,20 @@ fn resolve_config_path() -> (PathBuf, bool) {
     )
 }
 
-/// A per-call token for a sibling file name: process id, then nanoseconds.
+/// A per-call token for a sibling file name: process id, then nanoseconds, then
+/// a per-process sequence.
 ///
-/// Shared by the temporary file and the corrupt-config backup so both use one
-/// format. Not a security boundary — the config folder is the user's own — but
-/// it keeps two writers from choosing the same name.
+/// The sequence covers two calls in the same clock tick; without it the corrupt
+/// backup name was the one place two failures could collide and overwrite the
+/// first copy. Not a security boundary — the config folder is the user's own —
+/// but it keeps two writers from choosing the same name.
 fn unique_token() -> String {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
-    format!("{}-{nanos}", std::process::id())
+    let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{}-{nanos}-{seq}", std::process::id())
 }
 
 /// Legacy v1 path (`%APPDATA%\AudioSwitcher\config.json`) for one-time import.
@@ -667,12 +671,10 @@ impl AppConfig {
         let json = serde_json::to_string_pretty(self).expect("AppConfig serialization never fails");
         let body = format!("{}\n{json}\n", config_comment_header(path));
         let tmp_path = {
-            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let file_name = path
                 .file_name()
                 .map_or_else(|| "config.json".into(), |n| n.to_string_lossy().to_string());
-            let suffix = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            path.with_file_name(format!("{file_name}.tmp.{}-{suffix}", unique_token()))
+            path.with_file_name(format!("{file_name}.tmp.{}", unique_token()))
         };
         // Flushed before the rename: the rename is atomic for readers, but on
         // its own it can land with the new name and old or empty contents after
