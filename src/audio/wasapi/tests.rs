@@ -95,17 +95,15 @@ fn integration_external_volume_change_notifies() {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    // Restore via the backend (suppressed — must not re-raise the flag).
-    // Self-notifications arrive asynchronously, so wait past the
-    // suppression window and assert none arrived.
+    // Restore via the backend (stamped with our event context — must not
+    // re-raise the flag). Self-echoes arrive asynchronously, so wait long
+    // enough for a delayed callback and assert none arrived.
     backend.set_volume(vol0).expect("restore volume");
-    // Well past the 200ms suppression window: a callback delayed by a busy
-    // audio service must not be mistaken for a failed suppression.
     for _ in 0..20 {
         std::thread::sleep(Duration::from_millis(50));
         assert!(
             !take_volume_changed(),
-            "suppressed self-change raised the flag"
+            "our own write was reported as an external change"
         );
     }
     assert!(

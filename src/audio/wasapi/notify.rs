@@ -9,9 +9,8 @@
 //! reads goes through [`take_device_changed`] / [`take_volume_changed`], which
 //! swap the flag back to false so a burst collapses into one wake.
 //!
-//! The suppression window exists because the snapshot path writes the volume
-//! itself: its own notification would otherwise arrive as an "external"
-//! change and re-trigger a resync.
+//! Every endpoint write carries [`SELF_EVENT_CONTEXT`]. The callback ignores
+//! only that origin, so external changes are never lost beside our own writes.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering as AtomicOrdering};
@@ -28,42 +27,12 @@ use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
 #[cfg(windows)]
 static DEVICE_CHANGED: AtomicBool = AtomicBool::new(false);
 
-/// Window (ms) during which notifications after a self-initiated change are
-/// treated as echoes of that change. Endpoint notifications typically arrive
-/// within tens of milliseconds; 200ms covers the tail while minimizing the
-/// window in which a genuine external change could be coalesced away.
-#[cfg(windows)]
-pub(super) const SUPPRESS_WINDOW_MS: u64 = 200;
-
-#[cfg(windows)]
-static SUPPRESS_UNTIL_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Monotonic milliseconds since boot. Uses `GetTickCount64`, which is
-/// unaffected by wall-clock adjustments (NTP, manual changes) — a wall
-/// clock could otherwise stretch or collapse the suppression window.
-#[cfg(windows)]
-fn now_ms() -> u64 {
-    // SAFETY: `GetTickCount64` takes no arguments and has no failure modes.
-    unsafe { windows::Win32::System::SystemInformation::GetTickCount64() }
-}
-
-/// Suppress self-initiated audio-change notifications for `ms` milliseconds.
+/// Event origin stamped on every endpoint-volume write made by this process.
 ///
-/// Endpoint-volume/property notifications are delivered asynchronously via
-/// the audio service, so they arrive *after* the setter call returns — an
-/// RAII guard scoped to the call is not enough. A short window after each
-/// self-initiated change is used instead; external changes inside the
-/// window are rare and self-correct on the next external change.
-#[cfg(windows)]
-pub(super) fn suppress_self_changes_for(ms: u64) {
-    SUPPRESS_UNTIL_MS.store(now_ms().saturating_add(ms), AtomicOrdering::Release);
-}
-
-/// Whether self-initiated changes are currently being suppressed.
-#[cfg(windows)]
-fn suppress_notify() -> bool {
-    now_ms() < SUPPRESS_UNTIL_MS.load(AtomicOrdering::Acquire)
-}
+/// A `static` (not a `const`) so the API's `*const GUID` parameter can point at
+/// one stable address.
+pub(super) static SELF_EVENT_CONTEXT: windows::core::GUID =
+    windows::core::GUID::from_u128(0x49d7f48d_e97d_46eb_b12d_565682a66a47);
 
 /// Returns and clears the device-change flag set by `IMMNotificationClient`.
 #[cfg(windows)]
@@ -82,9 +51,8 @@ pub(super) fn device_changed_pending() -> bool {
     DEVICE_CHANGED.load(AtomicOrdering::Acquire)
 }
 
-/// Set when the endpoint volume/mute changed externally (media keys, other
-/// apps, system mixer). Self-initiated changes are suppressed via
-/// [`suppress_self_changes_for`].
+/// Set when endpoint volume/mute changed externally (media keys, other apps,
+/// system mixer). Our own event context is ignored by the callback.
 #[cfg(windows)]
 static VOLUME_CHANGED: AtomicBool = AtomicBool::new(false);
 
@@ -198,10 +166,15 @@ unsafe extern "system" fn volume_release(this: *mut std::ffi::c_void) -> u32 {
 #[cfg(windows)]
 unsafe extern "system" fn volume_on_notify(
     _this: *mut std::ffi::c_void,
-    _notify: *mut windows::Win32::Media::Audio::AUDIO_VOLUME_NOTIFICATION_DATA,
+    notify: *mut windows::Win32::Media::Audio::AUDIO_VOLUME_NOTIFICATION_DATA,
 ) -> windows::core::HRESULT {
     use windows::Win32::Foundation::S_OK;
-    if suppress_notify() {
+    // SAFETY: WASAPI owns a live notification payload for the duration of
+    // OnNotify; only its fixed-size event context is read, never the channel tail.
+    let Some(data) = (unsafe { notify.as_ref() }) else {
+        return windows::Win32::Foundation::E_POINTER;
+    };
+    if data.guidEventContext == SELF_EVENT_CONTEXT {
         return S_OK;
     }
     VOLUME_CHANGED.store(true, AtomicOrdering::Release);
@@ -559,9 +532,6 @@ unsafe extern "system" fn device_on_property_changed(
     if key != PKEY_Device_FriendlyName {
         return S_OK;
     }
-    if suppress_notify() {
-        return S_OK;
-    }
     DEVICE_CHANGED.store(true, AtomicOrdering::Release);
     crate::platform::pump::wake();
     S_OK
@@ -662,3 +632,6 @@ pub(super) fn register_notification_client() -> bool {
     }
     true
 }
+
+#[cfg(test)]
+mod tests;

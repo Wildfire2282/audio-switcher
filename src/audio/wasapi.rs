@@ -1,9 +1,9 @@
 //! Concrete WASAPI backend for the Windows audio stack.
 //!
 //! Split by seam: [`default_device`] owns the raw `IPolicyConfig` switch, [`notify`]
-//! owns the COM callbacks and the self-change suppression window, and this
-//! file owns the backend itself - device cache, snapshot, volume/mute IO -
-//! plus the non-Windows stub.
+//! owns the COM callbacks and the self-write event context, and this file owns
+//! the backend itself - device cache, snapshot, volume/mute IO - plus the
+//! non-Windows stub.
 //!
 //! Threading: the backend is used from the message-loop thread only.
 
@@ -37,9 +37,9 @@ mod notify;
 use default_device::set_default_endpoint_raw;
 #[cfg(windows)]
 use notify::{
-    SUPPRESS_WINDOW_MS, device_changed_pending, register_notification_client,
-    request_volume_reregister, spawn_volume_notify_worker, suppress_self_changes_for,
-    take_device_changed, take_volume_changed,
+    SELF_EVENT_CONTEXT, device_changed_pending, register_notification_client,
+    request_volume_reregister, spawn_volume_notify_worker, take_device_changed,
+    take_volume_changed,
 };
 
 /// The Windows WASAPI backend.
@@ -154,8 +154,8 @@ impl WasapiBackend {
         // Default + volume/mute share one endpoint.
         // SAFETY: the `windows` crate marks COM methods unsafe. Every call here
         // runs on an interface this scope owns and keeps alive (`enumerator` is
-        // borrowed for the block; `dev` and `vol` are owned by it), and the null
-        // event-context argument is the documented "no callback" form.
+        // borrowed for the block; `dev` and `vol` are owned by it), and the
+        // event-context pointer stays valid for the call.
         unsafe {
             if let Ok(dev) = enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia) {
                 if let Ok(id) = Self::device_id(&dev) {
@@ -177,9 +177,11 @@ impl WasapiBackend {
                         if let Some(volume) = snap.volume {
                             let clamped = clamp_volume(volume, cfg);
                             if clamped != volume {
-                                suppress_self_changes_for(SUPPRESS_WINDOW_MS);
                                 let v = clamped.min(100) as f32 / 100.0;
-                                if vol.SetMasterVolumeLevelScalar(v, std::ptr::null()).is_ok() {
+                                if vol
+                                    .SetMasterVolumeLevelScalar(v, &raw const SELF_EVENT_CONTEXT)
+                                    .is_ok()
+                                {
                                     snap.volume = Some(clamped);
                                 }
                             }
@@ -471,7 +473,7 @@ impl AudioBackend for WasapiBackend {
         let v = volume.min(100) as f32 / 100.0;
         // SAFETY: COM methods are unsafe in the `windows` crate; `enumerator`,
         // `dev` and `vol` are all owned by this scope for the whole block, and
-        // the null event-context argument is the documented "no callback" form.
+        // the event-context pointer stays valid for each call.
         unsafe {
             let enumerator = self.enumerator_mut().map_err(AudioError::from)?;
             let dev = enumerator
@@ -479,10 +481,7 @@ impl AudioBackend for WasapiBackend {
                 .map_err(AudioError::from)?;
             let vol: IAudioEndpointVolume =
                 dev.Activate(CLSCTX_ALL, None).map_err(AudioError::from)?;
-            // Self-initiated change: suppress the asynchronously delivered
-            // notification of our own write.
-            suppress_self_changes_for(SUPPRESS_WINDOW_MS);
-            match vol.SetMasterVolumeLevelScalar(v, std::ptr::null()) {
+            match vol.SetMasterVolumeLevelScalar(v, &raw const SELF_EVENT_CONTEXT) {
                 Ok(()) => Ok(()),
                 Err(e) => {
                     // Only retry on the two transient transport HRESULTs seen
@@ -490,7 +489,9 @@ impl AudioBackend for WasapiBackend {
                     // every other failure is treated as permanent.
                     let hr = e.code().0 as u32;
                     if (hr == 0x8007_001E || hr == 0x8007_04D4)
-                        && vol.SetMasterVolumeLevelScalar(v, std::ptr::null()).is_ok()
+                        && vol
+                            .SetMasterVolumeLevelScalar(v, &raw const SELF_EVENT_CONTEXT)
+                            .is_ok()
                     {
                         return Ok(());
                     }
@@ -506,8 +507,8 @@ impl AudioBackend for WasapiBackend {
 
     fn set_mute(&mut self, mute: bool) -> Result<(), AudioError> {
         // SAFETY: COM methods are unsafe in the `windows` crate; `enumerator`,
-        // `dev` and `vol` are owned here, and the null event-context argument
-        // means "no completion callback", which this call does not need.
+        // `dev` and `vol` are owned here, and the event-context pointer stays
+        // valid for the call.
         unsafe {
             let enumerator = self.enumerator_mut().map_err(AudioError::from)?;
             let dev = enumerator
@@ -515,9 +516,7 @@ impl AudioBackend for WasapiBackend {
                 .map_err(AudioError::from)?;
             let vol: IAudioEndpointVolume =
                 dev.Activate(CLSCTX_ALL, None).map_err(AudioError::from)?;
-            // Self-initiated change: suppress our own notification.
-            suppress_self_changes_for(SUPPRESS_WINDOW_MS);
-            vol.SetMute(mute, std::ptr::null())
+            vol.SetMute(mute, &raw const SELF_EVENT_CONTEXT)
                 .map_err(AudioError::from)
         }
     }
@@ -529,7 +528,6 @@ impl AudioBackend for WasapiBackend {
         let (vol, _) = self.get_volume_and_mute()?;
         let clamped = clamp_volume(vol, cfg);
         if clamped != vol {
-            suppress_self_changes_for(SUPPRESS_WINDOW_MS);
             return self.set_volume(clamped);
         }
         Ok(())
