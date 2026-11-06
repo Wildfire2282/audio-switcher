@@ -228,6 +228,64 @@ fn corrupted_fallback() {
         "not json",
         "the backup must hold the bytes that failed to parse"
     );
+    let mut recovered = loaded;
+    recovered.volume_limit = 50;
+    recovered.save_to(&path).unwrap();
+    assert_eq!(AppConfig::load_from(&path).volume_limit, 50);
+    assert_eq!(std::fs::read(backup.path()).unwrap(), b"not json");
+}
+
+#[test]
+fn failed_backup_keeps_later_saves_write_protected() {
+    let dir = tempdir().unwrap();
+    // The source name fits a filesystem component; adding a backup suffix does not.
+    let original_path = dir.path().join("c".repeat(255));
+    let raw = b"not json\xff";
+    std::fs::write(&original_path, raw).unwrap();
+    let mut cfg = AppConfig::load_from(&original_path);
+    assert_eq!(std::fs::read(&original_path).unwrap(), raw);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+
+    // Remove the path-length obstacle so only the session guard can reject saving.
+    let path = AppConfig::config_path_for(dir.path());
+    std::fs::rename(&original_path, &path).unwrap();
+    cfg.volume_limit = 50;
+    for _ in 0..2 {
+        assert!(
+            cfg.save_to(&path).is_err(),
+            "a failed backup must protect later saves even after the IO obstacle is gone"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), raw);
+    }
+    assert!(
+        serde_json::to_value(&cfg)
+            .unwrap()
+            .get("load_failed")
+            .is_none()
+    );
+}
+
+#[test]
+fn successful_backup_allows_retry_after_reset_write_fails() {
+    let dir = tempdir().unwrap();
+    let path = AppConfig::config_path_for(dir.path());
+    // A directory blocks the reset rename, not the sibling backup write.
+    std::fs::create_dir(&path).unwrap();
+    let raw = b"not json";
+    let mut cfg = AppConfig::load_from_bytes(raw, &path);
+    assert!(path.is_dir(), "the reset must have failed");
+    let backup = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(Result::unwrap)
+        .find(|entry| entry.path().is_file())
+        .expect("the successful backup must survive the failed reset");
+    assert_eq!(std::fs::read(backup.path()).unwrap(), raw);
+
+    std::fs::remove_dir(&path).unwrap();
+    cfg.volume_limit = 50;
+    cfg.save_to(&path).unwrap();
+    assert_eq!(AppConfig::load_from(&path).volume_limit, 50);
+    assert_eq!(std::fs::read(backup.path()).unwrap(), raw);
 }
 
 #[test]

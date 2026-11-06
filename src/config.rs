@@ -5,7 +5,8 @@
 //! `%LOCALAPPDATA%` → then temp (degraded: in-memory load still works, every
 //! save logs a warning). The `./config.json` fallback is banned (`Program
 //! Files` is not writable). Unknown fields are rejected so config typos fail
-//! loudly (backup + reset to defaults).
+//! loudly (backup + reset to defaults). If backup fails, defaults remain
+//! in memory and the session refuses saves to preserve the original file.
 
 use serde::{Deserialize, Deserializer, Serialize};
 use std::path::{Path, PathBuf};
@@ -225,9 +226,8 @@ pub struct AppConfig {
     /// One combination per action; all off unless set.
     #[serde(default)]
     pub hotkeys: Hotkeys,
-    /// Set when this session started from defaults because the file could not
-    /// be read. Saving would replace settings this session never saw, so
-    /// [`Self::save_to`] refuses instead of clobbering them.
+    /// Set when defaults replace a file that could not be read or safely backed
+    /// up. [`Self::save_to`] refuses for the session to preserve the original.
     ///
     /// Crate-visible, not `pub`: it is session state, never a persisted field.
     #[serde(skip)]
@@ -593,13 +593,13 @@ impl AppConfig {
         cfg
     }
 
-    /// Back up offending `bytes` next to `path`, overwrite with defaults, and return them.
+    /// Back up offending bytes before resetting; failed backups write-protect the session.
     fn backup_and_reset(bytes: &[u8], path: &Path) -> Self {
         let file_name = path
             .file_name()
             .map_or_else(|| "config.json".into(), |n| n.to_string_lossy().to_string());
         let backup = path.with_file_name(format!("{file_name}.bak.{}", unique_token()));
-        let def = Self::default();
+        let mut def = Self::default();
         match std::fs::write(&backup, bytes) {
             Ok(()) => {
                 // Reset only once the offending bytes are safe elsewhere: this
@@ -608,7 +608,12 @@ impl AppConfig {
                     tracing::warn!("config reset write failed: {e}");
                 }
             }
-            Err(e) => tracing::warn!("config backup failed ({e}); leaving the file in place"),
+            Err(e) => {
+                def.load_failed = true;
+                tracing::warn!(
+                    "config backup failed ({e}); leaving the file in place and disabling saves for this session"
+                );
+            }
         }
         def
     }
@@ -621,8 +626,8 @@ impl AppConfig {
     ///
     /// # Errors
     ///
-    /// Returns `io::Error` if the file was unreadable when this session
-    /// started, or if directory creation, write, or rename fails.
+    /// Returns `io::Error` if the file could not be read or safely backed up at
+    /// startup, or if directory creation, write, or rename fails.
     ///
     /// # Panics
     ///
@@ -632,7 +637,7 @@ impl AppConfig {
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
         if self.load_failed {
             return Err(std::io::Error::other(
-                "config was unreadable at startup; refusing to overwrite it",
+                "config could not be read or safely backed up at startup; refusing to overwrite it",
             ));
         }
         if Self::config_degraded() {
