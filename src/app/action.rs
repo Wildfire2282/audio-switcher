@@ -117,8 +117,12 @@ impl<B: AudioBackend> App<B> {
     }
 
     pub(super) fn save_and_refresh(&mut self) {
-        // Synchronous save for critical config — avoids loss on fast exit.
-        if let Err(e) = self.cfg.save_to(&AppConfig::config_path()) {
+        // Synchronous save for critical config — avoids loss on fast exit. The
+        // hotkeys are hand-edited only, so adopt the on-disk copy first: a menu
+        // save must not rewrite an edit made since startup.
+        let path = AppConfig::config_path();
+        self.cfg.merge_disk_hotkeys(&path);
+        if let Err(e) = self.cfg.save_to(&path) {
             tracing::warn!("config save failed: {e}");
         }
         self.refresh_ui();
@@ -155,8 +159,13 @@ impl<B: AudioBackend> App<B> {
             MenuAction::OpenHotkeySettings => {
                 // Manual-only hotkeys: ensure the commented config exists, then
                 // open its folder so the user can edit `hotkeys` and restart.
-                if let Err(e) = self.cfg.save_to(&AppConfig::config_path()) {
-                    tracing::warn!("config save failed before opening folder: {e}");
+                // Saving an existing file here would rewrite edits made since
+                // startup before the restart that applies them.
+                let path = AppConfig::config_path();
+                if !path.exists() {
+                    if let Err(e) = self.cfg.save_to(&path) {
+                        tracing::warn!("config save failed before opening folder: {e}");
+                    }
                 }
                 crate::platform::shell::open_folder(
                     &AppConfig::config_dir(),

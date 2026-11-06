@@ -543,3 +543,35 @@ fn line_and_block_comments_are_stripped_outside_strings() {
     let (cfg2, _d2) = load_raw(raw);
     assert_eq!(cfg2.hotkeys.get(HotkeyAction::Mute), Some("Ctrl+Alt+M"));
 }
+
+#[test]
+fn a_menu_save_keeps_hotkeys_edited_on_disk() {
+    let dir = tempdir().unwrap();
+    let path = AppConfig::config_path_for(dir.path());
+    // On-disk: the user's hand edit, written after the session loaded.
+    let mut disk = AppConfig::default();
+    disk.hotkeys
+        .set(HotkeyAction::Mute, Some("Ctrl+Alt+M".into()));
+    disk.save_to(&path).unwrap();
+
+    // In-memory: the session's copy from before the edit.
+    let mut session = AppConfig::default();
+    assert_eq!(session.hotkeys.get(HotkeyAction::Mute), None);
+    session.merge_disk_hotkeys(&path);
+    assert_eq!(
+        session.hotkeys.get(HotkeyAction::Mute),
+        Some("Ctrl+Alt+M"),
+        "a menu save must not erase an edit made since startup"
+    );
+
+    // A missing file leaves the in-memory value alone.
+    let mut untouched = AppConfig::default();
+    untouched
+        .hotkeys
+        .set(HotkeyAction::VolumeUp, Some("Ctrl+Alt+Up".into()));
+    untouched.merge_disk_hotkeys(&dir.path().join("absent.json"));
+    assert_eq!(
+        untouched.hotkeys.get(HotkeyAction::VolumeUp),
+        Some("Ctrl+Alt+Up")
+    );
+}

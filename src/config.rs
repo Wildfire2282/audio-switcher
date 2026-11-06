@@ -490,6 +490,24 @@ impl AppConfig {
         }
     }
 
+    /// Adopt the hotkey combinations currently on disk.
+    ///
+    /// Hotkeys are hand-edited only, so a menu-driven save must not overwrite an
+    /// edit made since startup: the setting applies on restart, and rewriting
+    /// the in-memory copy would discard it before that restart. A missing or
+    /// unparsable file leaves the in-memory value alone; the caller's save then
+    /// still writes a usable file.
+    pub(crate) fn merge_disk_hotkeys(&mut self, path: &Path) {
+        let Ok(bytes) = std::fs::read(path) else {
+            return;
+        };
+        let Ok(disk) = serde_json::from_slice::<Self>(&strip_json_comments(&bytes)) else {
+            return;
+        };
+        self.hotkeys = disk.hotkeys;
+        self.hotkeys.normalize();
+    }
+
     /// Test helper: config path inside a temp dir.
     #[cfg(test)]
     #[must_use]
