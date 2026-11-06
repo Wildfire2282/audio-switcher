@@ -29,10 +29,25 @@ impl<B: AudioBackend> App<B> {
             return;
         }
         match mouse_hook::WheelHook::install() {
-            Some(hook) => self.hook = Some(hook),
-            // Without a new deadline the install would be retried on every
-            // frame — a hundred log lines a second while the failure lasts.
-            None => self.hook_install_at = Instant::now() + HOOK_RETRY_WAIT,
+            Some(hook) => {
+                self.hook = Some(hook);
+                self.hook_failure_reported = false;
+            }
+            None => {
+                // Without a new deadline the install would be retried on every
+                // frame — a hundred log lines a second while the failure lasts.
+                // The warning is reported once per failure streak: the retry is
+                // every couple of seconds and would fill the log for the rest
+                // of the session.
+                if !self.hook_failure_reported {
+                    self.hook_failure_reported = true;
+                    tracing::warn!(
+                        "wheel hook unavailable; retrying every {}s until it installs",
+                        HOOK_RETRY_WAIT.as_secs()
+                    );
+                }
+                self.hook_install_at = Instant::now() + HOOK_RETRY_WAIT;
+            }
         }
     }
     /// Drop the wheel hook so the next frame installs a fresh one.

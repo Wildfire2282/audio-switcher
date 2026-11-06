@@ -167,7 +167,9 @@ impl WheelHook {
                     _marker: std::marker::PhantomData,
                 }),
                 Err(e) => {
-                    tracing::warn!("mouse hook install failed: {e:?}");
+                    // The caller reports the first failure of a streak; this
+                    // detail is only useful with debug logging on.
+                    tracing::debug!("mouse hook install failed: {e:?}");
                     None
                 }
                 Ok(_) => None,

@@ -69,6 +69,10 @@ pub struct App<B: AudioBackend = WasapiBackend> {
     devices_pending: bool,
     hook: Option<mouse_hook::WheelHook>,
     hook_install_at: Instant,
+    /// Whether the current install-failure streak has already been reported.
+    /// The retry loop runs every couple of seconds; repeating the warning would
+    /// fill the log for the whole session.
+    hook_failure_reported: bool,
     should_exit: bool,
     /// Authoritative for our own writes, resynced from the backend on every
     /// external change and full refresh. The wheel path must not read the
@@ -194,6 +198,7 @@ impl<B: AudioBackend> App<B> {
             devices_pending: false,
             hook: None,
             hook_install_at: Instant::now() + Duration::from_millis(180),
+            hook_failure_reported: false,
             should_exit: false,
             cached_volume,
             volume_known,
