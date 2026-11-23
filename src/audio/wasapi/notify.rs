@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering as AtomicOrdering};
 use std::time::Duration;
 
 use super::WasapiBackend;
+use crate::audio::AudioError;
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Win32::Media::Audio::{
@@ -257,26 +258,21 @@ pub(super) fn request_volume_reregister() {
 /// Activate the default render endpoint and register the volume callback on it.
 ///
 /// Returns the live `(endpoint id, interface)` pair: keeping the interface alive
-/// is what keeps the registration alive. `None` on any failure, which leaves the
-/// caller's `current` empty so the next pass retries.
+/// is what keeps the registration alive. `Err` carries the failing step, so the
+/// worker can log why external changes would go dark.
 ///
 /// # Safety
 ///
 /// Must run on a thread with COM initialized (the MTA worker).
 #[cfg(windows)]
-unsafe fn activate_volume_callback() -> Option<(String, IAudioEndpointVolume)> {
+unsafe fn activate_volume_callback() -> Result<(String, IAudioEndpointVolume), AudioError> {
     // SAFETY: the caller guarantees an initialized apartment on this thread.
     unsafe {
         let enumerator =
-            CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)
-                .ok()?;
-        let dev = enumerator
-            .GetDefaultAudioEndpoint(eRender, eMultimedia)
-            .ok()?;
-        let id = WasapiBackend::device_id(&dev).ok()?;
-        let vol = dev
-            .Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
-            .ok()?;
+            CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+        let dev = enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia)?;
+        let id = WasapiBackend::device_id(&dev)?;
+        let vol = dev.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)?;
         let callback = if let Some(holder) = VOLUME_CALLBACK.get() {
             holder.0.clone()
         } else {
@@ -284,8 +280,8 @@ unsafe fn activate_volume_callback() -> Option<(String, IAudioEndpointVolume)> {
             let _ = VOLUME_CALLBACK.set(VolumeCallbackHolder(cb.clone()));
             cb
         };
-        vol.RegisterControlChangeNotify(&callback).ok()?;
-        Some((id, vol))
+        vol.RegisterControlChangeNotify(&callback)?;
+        Ok((id, vol))
     }
 }
 
@@ -319,12 +315,20 @@ pub(super) fn spawn_volume_notify_worker() {
             // SAFETY: CoInitializeEx MTA on a dedicated worker thread; the
             // thread lives for the process lifetime, so CoUninitialize is never
             // needed.
-            unsafe {
-                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let com_init = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+            if com_init.is_err() {
+                // A failure here makes every later CoCreateInstance return
+                // CO_E_NOTINITIALIZED and retry silently; this is the only
+                // trace of why external changes would go dark.
+                tracing::warn!("volume-notify: CoInitializeEx failed: {com_init:?}");
             }
             // Live registration: keeping the endpoint-volume interface alive is
             // what keeps the callback registration alive.
             let mut current: Option<(String, IAudioEndpointVolume)> = None;
+            // One warning per failing streak: the retry below is once a second,
+            // and without it a machine whose endpoint never registers would
+            // silently drop every external volume change.
+            let mut failure_reported = false;
             loop {
                 // Register when nothing is live, or when the default endpoint
                 // changed. The request is consumed unconditionally: it is the
@@ -341,7 +345,19 @@ pub(super) fn spawn_volume_notify_worker() {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
                     // SAFETY: this thread initialized COM above.
-                    current = unsafe { activate_volume_callback() };
+                    current = match unsafe { activate_volume_callback() } {
+                        Ok(pair) => {
+                            failure_reported = false;
+                            Some(pair)
+                        }
+                        Err(e) => {
+                            if !failure_reported {
+                                failure_reported = true;
+                                tracing::warn!("volume-notify registration failed; retrying: {e}");
+                            }
+                            None
+                        }
+                    };
                     if let Some((id, _)) = &current {
                         *VOLUME_NOTIFY_ID
                             .lock()
