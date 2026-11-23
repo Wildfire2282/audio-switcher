@@ -72,14 +72,19 @@ pub(super) unsafe fn set_default_endpoint_raw(
     ) -> HRESULT;
     type ReleaseFn = unsafe extern "system" fn(*mut std::ffi::c_void) -> u32;
     let wide: Vec<u16> = crate::platform::utf16::wide_z(device_id);
-    let mut last_err: Option<windows::core::Error> = None;
+    // Two slots by depth: the error the dialog finally shows must be the
+    // deepest failure any candidate reached (a SetDefaultEndpoint refusal on
+    // the canonical CLSID names the real cause), never a later candidate's
+    // shallower "class not registered".
+    let mut set_err: Option<windows::core::Error> = None;
+    let mut probe_err: Option<windows::core::Error> = None;
     for &(clsid, iid, primary_off) in CANDIDATES {
         // SAFETY: CoCreateInstance with valid CLSID, no aggregation, CLSCTX_ALL.
         let instance: windows::core::Result<IUnknown> =
             unsafe { CoCreateInstance(&clsid, None, CLSCTX_ALL) };
         let Ok(unk) = instance else {
             if let Err(e) = instance {
-                last_err = Some(e);
+                probe_err.get_or_insert(e);
             }
             continue;
         };
@@ -97,8 +102,7 @@ pub(super) unsafe fn set_default_endpoint_raw(
             // live GUID and `iface` is a valid out-pointer.
             let hr_qi = unsafe { qi(raw_unk, std::ptr::from_ref(&iid), &mut iface) };
             if hr_qi.is_err() {
-                // Recorded so the error the caller finally sees names this cause.
-                last_err = Some(windows::core::Error::from(hr_qi));
+                probe_err.get_or_insert(windows::core::Error::from(hr_qi));
             }
             if hr_qi.is_ok() && !iface.is_null() {
                 // SAFETY: `iface` came from a successful QI; its vtable read is
@@ -131,7 +135,7 @@ pub(super) unsafe fn set_default_endpoint_raw(
                     if hr.is_ok() {
                         return Ok(());
                     }
-                    last_err = Some(windows::core::Error::from(hr));
+                    set_err.get_or_insert(windows::core::Error::from(hr));
                     // On Vista, a failed primary offset stops probing this CLSID:
                     // trying the other offset could fake S_OK; move to the next CLSID.
                     continue;
@@ -149,9 +153,9 @@ pub(super) unsafe fn set_default_endpoint_raw(
         // would be called with arguments it does not take. A refused QI is
         // reported instead, and the next candidate is tried.
     }
-    Err(
-        last_err.unwrap_or(windows::core::Error::from_hresult(windows::core::HRESULT(
+    Err(set_err
+        .or(probe_err)
+        .unwrap_or(windows::core::Error::from_hresult(windows::core::HRESULT(
             0x8004_0154_u32 as i32,
-        ))),
-    )
+        ))))
 }
