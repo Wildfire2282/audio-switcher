@@ -84,19 +84,28 @@ impl<B: AudioBackend> App<B> {
     /// apps, the system mixer) and refresh the mirror, the menu's mute check and
     /// the tray icon.
     ///
-    /// A failed read keeps the last known mirror: there is no second query to
-    /// fall back to, and reporting `0%`/unmuted would both mislead the next
-    /// wheel step and paint a wrong check mark.
-    pub(super) fn resync_volume_state(&mut self) {
-        match self.backend.get_volume_and_mute() {
-            Ok((volume, mute)) => {
-                self.cached_volume = volume;
-                self.volume_known = true;
-                self.cached_mute = mute;
-            }
-            Err(e) => {
-                tracing::warn!("volume/mute refresh failed; keeping the last known values: {e}");
-            }
+    /// `volume_mute` supplies a pair the caller already read (the clamp's), so
+    /// the endpoint is not queried twice; `None` reads here. A failed read
+    /// keeps the last known mirror: there is no second query to fall back to,
+    /// and reporting `0%`/unmuted would both mislead the next wheel step and
+    /// paint a wrong check mark.
+    pub(super) fn resync_volume_state(&mut self, volume_mute: Option<(u32, bool)>) {
+        let read = match volume_mute {
+            Some(pair) => Some(pair),
+            None => match self.backend.get_volume_and_mute() {
+                Ok(pair) => Some(pair),
+                Err(e) => {
+                    tracing::warn!(
+                        "volume/mute refresh failed; keeping the last known values: {e}"
+                    );
+                    None
+                }
+            },
+        };
+        if let Some((volume, mute)) = read {
+            self.cached_volume = volume;
+            self.volume_known = true;
+            self.cached_mute = mute;
         }
         // A failed read (`None`) keeps the last known device: the endpoint is
         // transiently unavailable, and `refresh_ui` corrects the mirror once the
@@ -275,31 +284,34 @@ impl<B: AudioBackend> App<B> {
     pub(super) fn toggle_mute(&mut self) {
         // The overlay reads the mirror; a placeholder read would show the wrong
         // volume for the rest of the card. The mute write and its icon still go
-        // through — only the card is withheld until a read succeeds.
-        let volume_known = self.ensure_volume_known();
+        // through — only the card is withheld until a volume read succeeds.
+        self.ensure_volume_known();
         let target = !self.cached_mute;
         if let Err(e) = self.backend.set_mute(target) {
             tracing::warn!("set_mute failed: {e}");
             return;
         }
         self.cached_mute = target;
-        // The mute click keeps its side effect of applying the volume limit,
-        // and the mirror is clamped with it: the feedback and the next step both
-        // read the mirror rather than the endpoint. Only a clamp the endpoint
-        // accepted may move the mirror — a failed write leaves the endpoint
-        // loud, and mirroring it anyway would put the next step's origin below
-        // what is actually playing.
+        // The mute click keeps its side effect of applying the volume limit.
+        // The mirror takes the endpoint level the clamp ensured — never
+        // `clamp(mirror)`, which would step the next notch from a place the
+        // endpoint has never been. A failed clamp leaves the mirror: the
+        // endpoint may sit above the cap, but the next read corrects it.
         match self.backend.clamp_volume_if_needed(&self.cfg) {
-            Ok(()) => {
-                self.cached_volume = crate::config::clamp_volume(self.cached_volume, &self.cfg);
+            Ok(Some((level, _))) => {
+                self.cached_volume = level;
+                self.volume_known = true;
             }
+            Ok(None) => {}
             Err(e) => tracing::warn!("volume clamp failed: {e}"),
         }
         // Only the mute read-outs move: a full `refresh_ui` would re-read the
         // whole snapshot and walk the menu for one check mark.
         self.tray.sync_mute(target);
         self.tray.update_icon_if_changed(target);
-        if volume_known {
+        // A clamp that returned a pair read the endpoint even when the first
+        // read failed; that reading is real enough to paint.
+        if self.volume_known {
             self.show_osd();
         }
     }

@@ -68,22 +68,22 @@ pub trait AudioBackend {
 
     fn set_default_input_device(&mut self, id: &str) -> Result<(), AudioError>;
 
-    /// `0..=100`.
-    fn get_volume(&self) -> Result<u32, AudioError>;
-
     /// Values outside `0..=100` are clamped by the caller.
     fn set_volume(&mut self, volume: u32) -> Result<(), AudioError>;
 
-    fn get_mute(&self) -> Result<bool, AudioError>;
-
     fn set_mute(&mut self, mute: bool) -> Result<(), AudioError>;
 
-    fn clamp_volume_if_needed(&mut self, cfg: &AppConfig) -> Result<(), AudioError>;
+    /// Enforce the configured cap: read the endpoint, write the clamped level
+    /// when it sits above the cap, and return the `(volume, mute)` the
+    /// endpoint now has. `Ok(None)` when no limit applies: nothing is read,
+    /// so there is no pair to report.
+    fn clamp_volume_if_needed(
+        &mut self,
+        cfg: &AppConfig,
+    ) -> Result<Option<(u32, bool)>, AudioError>;
 
     /// Batched so `WasapiBackend` can do one `Activate` instead of two calls.
-    fn get_volume_and_mute(&self) -> Result<(u32, bool), AudioError> {
-        Ok((self.get_volume()?, self.get_mute()?))
-    }
+    fn get_volume_and_mute(&self) -> Result<(u32, bool), AudioError>;
 
     fn poll_device_changed(&mut self) -> bool {
         false

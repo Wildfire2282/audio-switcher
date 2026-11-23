@@ -290,21 +290,6 @@ impl WasapiBackend {
         }
     }
 
-    /// Polls the notification flag and clears the device lists if a device
-    /// changed. Single helper shared by the inherent method and the trait impl.
-    fn take_notification(&mut self) -> bool {
-        if take_device_changed() {
-            self.invalidate_lists();
-            return true;
-        }
-        false
-    }
-
-    /// Inherent alias kept for callers using `WasapiBackend` directly.
-    pub fn poll_device_changed(&mut self) -> bool {
-        self.take_notification()
-    }
-
     fn get_enumerator() -> windows::core::Result<IMMDeviceEnumerator> {
         // SAFETY: a null outer object plus the `windows`-crate class id and IID
         // constants; on success the written pointer is an owned interface
@@ -434,7 +419,11 @@ impl AudioBackend for WasapiBackend {
         WasapiBackend::clear_cache(self);
     }
     fn poll_device_changed(&mut self) -> bool {
-        self.take_notification()
+        if take_device_changed() {
+            self.invalidate_lists();
+            return true;
+        }
+        false
     }
     fn take_volume_changed(&mut self) -> bool {
         take_volume_changed()
@@ -463,10 +452,6 @@ impl AudioBackend for WasapiBackend {
 
     fn set_default_input_device(&mut self, id: &str) -> Result<(), AudioError> {
         self.set_default_inner(id)
-    }
-
-    fn get_volume(&self) -> Result<u32, AudioError> {
-        self.get_volume_and_mute().map(|(v, _)| v)
     }
 
     fn set_volume(&mut self, volume: u32) -> Result<(), AudioError> {
@@ -501,10 +486,6 @@ impl AudioBackend for WasapiBackend {
         }
     }
 
-    fn get_mute(&self) -> Result<bool, AudioError> {
-        self.get_volume_and_mute().map(|(_, m)| m)
-    }
-
     fn set_mute(&mut self, mute: bool) -> Result<(), AudioError> {
         // SAFETY: COM methods are unsafe in the `windows` crate; `enumerator`,
         // `dev` and `vol` are owned here, and the event-context pointer stays
@@ -521,16 +502,19 @@ impl AudioBackend for WasapiBackend {
         }
     }
 
-    fn clamp_volume_if_needed(&mut self, cfg: &AppConfig) -> Result<(), AudioError> {
+    fn clamp_volume_if_needed(
+        &mut self,
+        cfg: &AppConfig,
+    ) -> Result<Option<(u32, bool)>, AudioError> {
         if !cfg.volume_limit_enabled {
-            return Ok(());
+            return Ok(None);
         }
-        let (vol, _) = self.get_volume_and_mute()?;
+        let (vol, mute) = self.get_volume_and_mute()?;
         let clamped = clamp_volume(vol, cfg);
         if clamped != vol {
-            return self.set_volume(clamped);
+            self.set_volume(clamped)?;
         }
-        Ok(())
+        Ok(Some((clamped, mute)))
     }
 }
 
@@ -553,15 +537,6 @@ impl WasapiBackend {
         self.cached = None;
         self.cache_time = None;
     }
-    pub fn poll_device_changed(&mut self) -> bool {
-        false
-    }
-    pub fn fetch_snapshot_clamped(&mut self, _cfg: &AppConfig) -> AudioSnapshot {
-        AudioSnapshot::default()
-    }
-    pub fn get_volume_and_mute(&self) -> Result<(u32, bool), AudioError> {
-        Ok((50, false))
-    }
 }
 #[cfg(not(windows))]
 impl AudioBackend for WasapiBackend {
@@ -583,20 +558,22 @@ impl AudioBackend for WasapiBackend {
     fn set_default_input_device(&mut self, _id: &str) -> Result<(), AudioError> {
         Ok(())
     }
-    fn get_volume(&self) -> Result<u32, AudioError> {
-        Ok(50)
-    }
     fn set_volume(&mut self, _volume: u32) -> Result<(), AudioError> {
         Ok(())
     }
-    fn get_mute(&self) -> Result<bool, AudioError> {
-        Ok(false)
+    // `Err`, not a fabricated pair: a made-up reading would mark the mirror
+    // known on a platform with no endpoint to read.
+    fn get_volume_and_mute(&self) -> Result<(u32, bool), AudioError> {
+        Err(AudioError::Failed("WASAPI is Windows-only".into()))
     }
     fn set_mute(&mut self, _mute: bool) -> Result<(), AudioError> {
         Ok(())
     }
-    fn clamp_volume_if_needed(&mut self, _cfg: &AppConfig) -> Result<(), AudioError> {
-        Ok(())
+    fn clamp_volume_if_needed(
+        &mut self,
+        _cfg: &AppConfig,
+    ) -> Result<Option<(u32, bool)>, AudioError> {
+        Ok(None)
     }
     fn clear_cache(&mut self) {
         WasapiBackend::clear_cache(self);

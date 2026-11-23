@@ -148,7 +148,7 @@ impl<B: AudioBackend> App<B> {
             // through it: a notch stepped from the previous device's volume
             // would overwrite the new device's state. Only the menu rebuild
             // waits for the coalesce window below.
-            self.resync_volume_state();
+            self.resync_volume_state(None);
         }
         // coalesce bursts: IMMNotificationClient may fire Added/Removed/DefaultChanged in quick succession.
         // The notification stays latched in `devices_pending` so the deferred
@@ -175,13 +175,17 @@ impl<B: AudioBackend> App<B> {
         }
         // A media key or another app raising the volume passes the cap, and
         // this notification is the only trigger that ever sees it: without the
-        // clamp the cap stays broken until some unrelated refresh. It runs
-        // before the resync so the overlay never paints a value the cap takes
-        // back in the same frame.
-        if let Err(e) = self.backend.clamp_volume_if_needed(&self.cfg) {
-            tracing::warn!("volume clamp failed after an external change: {e}");
-        }
-        self.resync_volume_state();
+        // clamp the cap stays broken until some unrelated refresh. The clamp's
+        // own read feeds the resync — one endpoint round-trip per change, and
+        // the overlay never paints a value the cap takes back in the same frame.
+        let volume_mute = match self.backend.clamp_volume_if_needed(&self.cfg) {
+            Ok(read) => read,
+            Err(e) => {
+                tracing::warn!("volume clamp failed after an external change: {e}");
+                None
+            }
+        };
+        self.resync_volume_state(volume_mute);
     }
     /// Drain global hotkeys pressed since the last frame.
     pub(super) fn poll_hotkeys(&mut self) {

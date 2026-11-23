@@ -145,16 +145,12 @@ impl AudioBackend for MockBackend {
         }
     }
 
-    fn get_volume(&self) -> Result<u32, AudioError> {
-        Ok(self.volume)
-    }
-
     fn set_volume(&mut self, volume: u32) -> Result<(), AudioError> {
         self.set_volume_impl(volume)
     }
 
-    fn get_mute(&self) -> Result<bool, AudioError> {
-        Ok(self.mute)
+    fn get_volume_and_mute(&self) -> Result<(u32, bool), AudioError> {
+        Ok((self.volume, self.mute))
     }
 
     fn set_mute(&mut self, mute: bool) -> Result<(), AudioError> {
@@ -165,11 +161,17 @@ impl AudioBackend for MockBackend {
         Ok(())
     }
 
-    fn clamp_volume_if_needed(&mut self, cfg: &AppConfig) -> Result<(), AudioError> {
+    fn clamp_volume_if_needed(
+        &mut self,
+        cfg: &AppConfig,
+    ) -> Result<Option<(u32, bool)>, AudioError> {
+        if !cfg.volume_limit_enabled {
+            return Ok(None);
+        }
         let clamped = clamp_volume(self.volume, cfg);
         if clamped != self.volume {
             self.volume = clamped;
         }
-        Ok(())
+        Ok(Some((self.volume, self.mute)))
     }
 }

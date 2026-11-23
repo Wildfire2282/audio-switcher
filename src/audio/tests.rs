@@ -55,6 +55,28 @@ fn clamp_via_backend() {
     assert_eq!(m.volume, 25);
 }
 
+/// The clamp hands the caller the endpoint level it ensured, so the mirror
+/// steps from where the endpoint actually is: `clamp(mirror)` used to invent
+/// a level the endpoint never had. `None` is "no limit, nothing read".
+#[test]
+fn clamp_reports_the_level_it_enforced_and_none_when_uncapped() {
+    let cfg = AppConfig {
+        volume_limit: 25,
+        volume_limit_enabled: true,
+        ..Default::default()
+    };
+    let mut m = MockBackend::new(vec![], None);
+    m.volume = 80;
+    m.mute = true;
+    assert_eq!(m.clamp_volume_if_needed(&cfg).unwrap(), Some((25, true)));
+    let off = AppConfig {
+        volume_limit_enabled: false,
+        ..Default::default()
+    };
+    assert_eq!(m.clamp_volume_if_needed(&off).unwrap(), None);
+    assert_eq!(m.volume, 25, "no limit means no write either");
+}
+
 /// A snapshot that reports the cap must have written it: the caller mirrors
 /// this value, so a read-out above the endpoint would misplace the next step.
 #[test]
@@ -70,7 +92,7 @@ fn a_clamped_snapshot_enforces_the_cap_on_the_endpoint() {
     let snapshot = backend.fetch_snapshot_clamped(&cfg);
 
     assert_eq!(
-        backend.get_volume().unwrap(),
+        backend.get_volume_and_mute().unwrap().0,
         25,
         "the snapshot must write the clamped level, not only report it"
     );
